@@ -1,0 +1,40 @@
+{
+  "name": "dsh-plugin-confirmation-resolution",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DSH 待确认事项决策 (confirmation_resolution): host-plane plugin that adds the confirmation-item runtime rules to the System Prompt and exposes the confirmation_resolution decision tool",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "verify": "node verify/wiring.mjs",
+    "check": "node --check lib/index.js && node --check lib/decide.js && node --check lib/rules.js && node --test \"test/*.test.mjs\" && node verify/wiring.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  }
+}

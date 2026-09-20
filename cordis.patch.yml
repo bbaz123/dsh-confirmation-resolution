@@ -1,0 +1,28 @@
+# dsh-plugin-confirmation-resolution bundle patch.
+#
+# Mounts the 待确认事项决策 (confirmation_resolution) plugin as a HOST-plane row:
+#
+#   * it publishes no service, so it needs no isolate realm;
+#   * it injects the host `tools` and `systemPrompt` registries and registers
+#     into them, exactly like the AgentTeams row next to it.
+#
+# The row therefore takes effect for every session of this profile, whichever
+# agent preset that session mounts — which is required, because a preset cannot
+# mount the prompt registry itself, so an agent preset can add tools but cannot
+# own a global System Prompt rule.
+#
+# Install: `dsh plugin --profile web add <this package directory>`.
+# The `dsh plugin` command pnpm-installs the package into the profile, adds it
+# to `dsh.profile.bundles`, and the loader applies this patch last.
+- insert:
+    - id: confirmation-resolution
+      # Node-resolvable package name — must stay in sync with package.json `name`.
+      name: 'dsh-plugin-confirmation-resolution'
+      config:
+        # Section name registered in the global `systemPrompt` registry. A scope
+        # (agent preset) may shadow it by registering the same name.
+        sectionName: 'confirmation:policy'
+        # Section order inside the assembled prompt. Between the approval-policy
+        # runtime context (115) and the AgentTeams policy (117), i.e. after the
+        # persona/identity block and before the per-tool instruction sections.
+        order: 116

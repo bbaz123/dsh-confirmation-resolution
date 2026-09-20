@@ -13,7 +13,7 @@ DSH 待确认事项决策机制 —— `confirmation_resolution`（中文名：*
 插件**不修改**页面、代码、文件、设计稿或项目结构：它只判断、决策并返回执行方案，
 实际执行由 DSH 完成。它也不发布任何服务，因此不需要 isolate realm。
 
-三份输入文件与产物的分工：
+三份输入文件与产物的分工（三份 `.docx` 规范源文件随仓库提供，位于仓库根目录）：
 
 | 输入文件 | 负责 | 落地位置 |
 | --- | --- | --- |
@@ -25,6 +25,9 @@ DSH 待确认事项决策机制 —— `confirmation_resolution`（中文名：*
 
 ```
 dsh-confirmation-resolution/
+├── 01_DSH_System_Prompt_待确认事项触发规则.docx    # 规范源文件（01）
+├── 02_Confirmation_Resolution_Plugin_执行规则.docx # 规范源文件（02）
+├── 03_DSH_待确认事项决策规范_维护与测试基准.docx   # 规范源文件（03）
 ├── package.json             # dsh.bundle.patch → cordis.patch.yml
 ├── cordis.patch.yml         # 宿主行：id confirmation-resolution，order 116
 ├── lib/

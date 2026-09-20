@@ -28,16 +28,57 @@ dsh-confirmation-resolution/
 ├── package.json             # dsh.bundle.patch → cordis.patch.yml
 ├── cordis.patch.yml         # 宿主行：id confirmation-resolution，order 116
 ├── lib/
-│   ├── index.js             # Cordis 入口：注册段落 + 注册工具
+│   ├── index.js             # Cordis 入口：注册段落 + 注册工具 + 代码级守卫
 │   ├── rules.js             # 01 的运行时规则文本（唯一事实来源）
-│   └── decide.js            # 02 的固定决策算法（纯函数，可单测）
+│   ├── decide.js            # 02 的固定决策算法（纯函数，可单测）
+│   └── ledger.js            # 会话级确认项账本（守卫的数据来源，纯状态容器）
 ├── test/
-│   ├── decide.test.mjs          # 算法、输出结构、边界
+│   ├── decide.test.mjs              # 算法、输出结构、边界
+│   ├── ledger-guard.test.mjs        # 账本 + 代码级守卫（驱动真实注册工具）
 │   └── mandatory-scenarios.test.mjs # 任务要求的 10 个强制场景
 ├── verify/
 │   └── wiring.mjs           # 用真实 Cordis + 真实 defineTool 验证装配
 └── node_modules/@deepseek-ai/   # 指向 DSH 的 dsh-tools / schemastery / cordis 链接
 ```
+
+## 两层触发保护
+
+| 层 | 位置 | 作用 |
+| --- | --- | --- |
+| 软保护 | `rules.js` 段落 + 工具描述 | 告诉模型何时该调用、何时不该调用 |
+| **硬保护** | `index.js` 的 `execute()` + `ledger.js` | 真正拒绝非法调用，不依赖模型遵守 Prompt |
+
+`execute()` 在计算任何决策之前先过会话账本：
+
+```
+action="register"  → 记录本轮发布的 C 编号，不做决策
+action="resolve"（默认） → 账本校验 → 通过才进入 decide()
+```
+
+拒绝条件（返回 `STATUS = NOT_APPLICABLE`、`execution_required = false`、不执行任何修改）：
+
+- 该编号在本会话从未被发布过；
+- 该编号已 `RESOLVED`，且未被用新文本重新发布。
+
+隐式登记（带全上下文但未 register）**只在会话账本为空时生效**；会话已有编号后，新编号必须显式
+`register`，否则"自造编号 + 完整上下文"会绕过守卫。
+
+账本以 `exec.agent.id`（会话 ID）为键，会话之间互不可见；宿主行卸载时清空（fiber 作用域 effect）。
+
+**已知限制：账本不持久化。** DSH 重启后账本为空，需要重新 `register`；重启同时也会结束该对话，
+因此守卫仍然成立，但不要把它当作跨重启的持久状态使用。
+
+## 职责边界：插件是"评审器"，不是"生成器"
+
+`decide.js` 是确定性的纯函数，不做自然语言推断。调用方（DSH）必须在调用前完成四件事：
+
+1. 识别 `user_goal`；
+2. 判断 `quality_impact`（或给出 `quality_dimensions` 证据）；
+3. `quality_impact !== NONE` 时判断 `user_impact_if_unchanged`（或给出 `user_impact_dimensions` / `preference_only`）；
+4. 对可能落到 `ACTION = MODIFY` 的确认项生成 2–3 个 `candidate_solutions`。
+
+第 4 项缺失时插件返回 `INSUFFICIENT_CONTEXT`（`02 §13`：不得把用户原方案当默认方案），
+**不会自行创造方案**——这正是纯函数可稳定测试的原因。
 
 ## 决策算法（固定，不可绕过）
 
@@ -71,12 +112,12 @@ dsh plugin --profile <profile> add <本仓库路径>
 ## 验证
 
 ```powershell
-npm test        # 36 个用例，含 10 个强制场景（纯函数，不需要 DSH）
+npm test        # 59 个用例，含 10 个强制场景与守卫用例（不需要 DSH）
 npm run verify  # 真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要已安装 DSH）
 npm run check   # 语法 + 测试 + 装配（需要 DSH）
 ```
 
-`npm test` 只依赖 `lib/` 里的纯函数（`decide.js`、`rules.js`），因此在任何机器上都能直接跑。
+`npm test` 只依赖 `lib/` 里的纯函数与状态容器（`decide.js`、`rules.js`、`ledger.js`），因此在任何机器上都能直接跑。
 `npm run verify` 需要真实的 DSH 安装：它用 `DSH_HOME`（默认 `~/.dsh`）与 `DSH_PROFILE`（默认 `web`）
 定位 profile 的 `node_modules`，没有硬编码的机器路径；找不到 DSH 时以退出码 2 明确报错，
 **不会把"没能执行"当成通过**。
@@ -117,7 +158,7 @@ dsh plugin --profile <profile> add <解压目录>
 # 然后重启 DSH 使宿主组合重新加载
 ```
 
-验证安装：(a) 解压目录内 `npm test` 应 36 项全通过、`npm run verify` 应 9/9 通过；
+验证安装：(a) 解压目录内 `npm test` 应 59 项全通过、`npm run verify` 应 13/13 通过；
 (b) `dsh --profile <profile> --dump-config` 退出码为 0 且输出包含 `id: confirmation-resolution`
 （退出码 0 即代表该行已解析并激活，因为 DSH 的启动审计会让任何未激活的行导致整个 profile 启动失败）。
 

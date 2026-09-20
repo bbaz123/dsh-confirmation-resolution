@@ -144,21 +144,30 @@ check('tool definition is registry-ready and named confirmation_resolution', () 
 })
 check('parameter schema exposes the optional context fields', () => {
   const schema = tools[0].parameters
-  for (const field of ['user_goal', 'relevant_context', 'available_constraints', 'quality_impact', 'candidate_solutions']) {
+  for (const field of ['user_goal', 'relevant_context', 'available_constraints', 'quality_impact', 'candidate_solutions', 'action']) {
     assert.ok(schema.properties[field] !== undefined, `missing parameter ${field}`)
   }
+  assert.deepEqual(schema.properties.action.enum, ['resolve', 'register'])
+})
+check('output schema declares the guard status and state, not just the two decisions', () => {
+  const schema = tools[0].output.schema
+  assert.deepEqual(schema.properties.status.enum, ['READY_TO_EXECUTE', 'INSUFFICIENT_CONTEXT', 'NOT_APPLICABLE'])
+  assert.deepEqual(schema.properties.confirmation_state.enum, ['PENDING', 'RESOLVED', 'UNCHANGED'])
 })
 
 // ── 4. execute + render ────────────────────────────────────────────────────
 const tool = tools[0]
-const decision = await tool.execute({
+// `exec.agent.id` is the live SessionId; the ledger guard keys on it.
+const exec = { agent: { id: 'wiring-session' } }
+const call = {
   confirmation_id: 'C1',
   current_state: '主按钮为次级尺寸',
   original_confirmation: '主按钮是否需要更突出？',
   user_reply: 'C1 修改',
   quality_impact: 'NONE',
   candidate_solutions: [{ label: 'promote', approach: '提高一个视觉层级', scope: 'component' }],
-}, {})
+}
+const decision = await tool.execute(call, exec)
 check('execute() returns a spec-shaped MODIFY decision', () => {
   assert.equal(decision.action, 'MODIFY')
   assert.equal(decision.status, 'READY_TO_EXECUTE')
@@ -174,10 +183,30 @@ check('render() emits the canonical uppercase block', () => {
   }
 })
 
-// ── 5. disposal ────────────────────────────────────────────────────────────
+// ── 5. the code-level guard, through the real tool ─────────────────────────
+check('the guard refuses an already-resolved item inside the real tool', async () => {
+  const again = await tool.execute(call, exec)
+  assert.equal(again.status, 'NOT_APPLICABLE')
+  assert.equal(again.execution_required, false)
+  assert.match(again.selection_reason, /ITEM_ALREADY_RESOLVED/)
+})
+check('register records without deciding', async () => {
+  const registered = await tool.execute({ ...call, confirmation_id: 'C2', action: 'register' }, exec)
+  assert.equal(registered.confirmation_state, 'PENDING')
+  assert.equal(registered.execution_required, false)
+  assert.match(registered.notes, /C2=PENDING/)
+})
+check('ledgers are session-keyed and resettable', () => {
+  assert.equal(typeof plugin.ledgers, 'object')
+  assert.equal(plugin.ledgers.sessionCount >= 1, true)
+  plugin.ledgers.clear()
+  assert.equal(plugin.ledgers.sessionCount, 0)
+})
+
+// ── 6. disposal ────────────────────────────────────────────────────────────
 check('both contributions are reversible effects', () => {
-  assert.equal(disposers.length, 1)
-  assert.equal(typeof disposers[0], 'function')
+  assert.equal(disposers.length, 2)
+  for (const disposer of disposers) assert.equal(typeof disposer, 'function')
 })
 
 console.log(results.join('\n'))

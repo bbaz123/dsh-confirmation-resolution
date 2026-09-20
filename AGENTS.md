@@ -26,7 +26,8 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
 | --- | --- |
 | `lib/rules.js` | 01 规则文本的**唯一事实来源**；测试直接 import 它，不得在测试里复制一份文本 |
 | `lib/decide.js` | 只放**纯函数**：无 I/O、无服务访问、无定时器，保证可单测 |
-| `lib/index.js` | 只做 Cordis 装配：注册段落 + 注册工具，不放业务判断 |
+| `lib/ledger.js` | 会话级确认项账本：纯状态容器，无 I/O；守卫的数据来源，按 `exec.agent.id` 隔离 |
+| `lib/index.js` | 只做 Cordis 装配与守卫：注册段落 + 注册工具 + execute 前置校验，不放决策算法 |
 | `cordis.patch.yml` | 宿主行定义；`id`、`name` 必须与 `package.json` 的 `name` 保持一致 |
 | `test/` | 断言规范给出的**预期结果**，不允许写"描述性"测试 |
 | `verify/` | 用真实 Cordis 与真实 `defineTool` 验证装配，不使用 mock 掉的注册表 |
@@ -39,11 +40,16 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
   也不要把 03 的规范文本注入 System Prompt。
 - 输出字段名（`confirmation_id`、`action`、`status` …）属于对外契约，改动视为破坏性变更。
 - 扩大插件作用域（例如让它处理普通任务、普通修改）属于破坏 03 §4 的边界，禁止。
+- **触发保护必须保持两层**：`rules.js` + 工具描述（软）+ `execute()` 的账本守卫（硬）。
+  不得把守卫降级为"仅靠 Prompt 约束"；`decide()` 必须保持纯函数，状态与守卫放在 `index.js`/`ledger.js`。
+- 账本按会话隔离，且**不持久化**（DSH 重启即空）。改成持久化属于契约变更，需先确认。
+- 测试涉及账本时必须用**每用例唯一的会话 ID**：`ledgers` 是模块级共享状态，
+  复用会话号会让用例互相污染（已实测踩过）。
 
 ## 构建 / 测试 / 检查命令
 
 ```powershell
-npm test        # node --test "test/*.test.mjs"（36 个用例，含 10 个强制场景；不需要 DSH）
+npm test        # node --test "test/*.test.mjs"（59 个用例，含 10 个强制场景 + 守卫用例；不需要 DSH）
 npm run verify  # node verify/wiring.mjs（真实 Cordis 上下文的装配验证）
 npm run check   # 语法检查 + 测试 + 装配验证
 ```

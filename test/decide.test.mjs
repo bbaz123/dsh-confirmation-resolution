@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { decide, formatDecision } from '../lib/decide.js'
+import { NOT_IDENTIFIED_GOAL, STATUS, decide, formatDecision, notApplicableValue } from '../lib/decide.js'
 import { RULES } from '../lib/rules.js'
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
@@ -434,4 +434,133 @@ test('回归 — INSUFFICIENT_CONTEXT 不得虚报未评估的维度等级', () 
   assert.equal(undecided.user_impact_if_unchanged, 'NONE')
   assert.match(undecided.quality_evidence, /unknown/)
   assert.match(undecided.user_impact_evidence, /unknown/)
+})
+
+// ── 代码审查修复（2026-09-20 第二轮） ──────────────────────────────────────
+
+test('修复 — addresses_root_cause:false 的候选必须被淘汰（此前变量名拼错导致该门失效）', () => {
+  const value = decide({
+    confirmation_id: 'C1',
+    current_state: '提示位置偏远，用户反馈看不到校验失败原因',
+    original_confirmation: '是否移动提示位置？',
+    user_reply: 'C1 修改：改个颜色就行',
+    quality_impact: 'LOW',
+    user_impact_if_unchanged: 'MEDIUM',
+    user_goal: '让用户能看到校验失败的原因',
+    candidate_solutions: [
+      {
+        label: 'color-only',
+        approach: '只把提示文字改成红色',
+        addresses_root_cause: false,
+        quality_loss: 'NONE',
+        user_benefit: 'MEDIUM',
+        scope: 'value',
+      },
+      {
+        label: 'reposition',
+        approach: '把提示移到字段旁并保持红色高亮',
+        addresses_root_cause: true,
+        quality_loss: 'LOW',
+        user_benefit: 'HIGH',
+        scope: 'component',
+      },
+    ],
+  })
+  assert.equal(value.status, 'READY_TO_EXECUTE')
+  assert.equal(value.selected_solution, '把提示移到字段旁并保持红色高亮')
+  assert.match(value.notes, /color-only/)
+  assert.match(value.notes, /root cause/)
+})
+
+test('修复 — user_benefit / system_consistency / stability_risk 真正参与排序', () => {
+  const value = decide({
+    confirmation_id: 'C1',
+    current_state: '主按钮为次级尺寸',
+    original_confirmation: '主按钮是否需要更突出？',
+    user_reply: 'C1 修改',
+    quality_impact: 'LOW',
+    user_impact_if_unchanged: 'MEDIUM',
+    user_goal: '提高关键操作的可发现性',
+    candidate_solutions: [
+      {
+        label: 'contrast-only',
+        approach: '提高按钮对比度',
+        quality_loss: 'LOW',
+        user_benefit: 'MEDIUM',
+        system_consistency: 'LOW',
+        stability_risk: 'LOW',
+        scope: 'value',
+      },
+      {
+        label: 'promote',
+        approach: '提高一个视觉层级并强化局部间距',
+        quality_loss: 'LOW',
+        user_benefit: 'HIGH',
+        system_consistency: 'NONE',
+        stability_risk: 'NONE',
+        scope: 'component',
+      },
+    ],
+  })
+  assert.equal(value.selected_solution, '提高一个视觉层级并强化局部间距')
+})
+
+test('修复 — 收益与质量同分时，一致性/稳定性风险更低者胜出（02 §8 优先级 5、6）', () => {
+  const base = {
+    confirmation_id: 'C1',
+    current_state: '次要操作入口不明显',
+    original_confirmation: '是否调整？',
+    user_reply: 'C1 修改',
+    quality_impact: 'LOW',
+    user_impact_if_unchanged: 'MEDIUM',
+    user_goal: '让次要入口更容易找到',
+  }
+  const consistent = decide({
+    ...base,
+    candidate_solutions: [
+      { label: 'new-pattern', approach: '引入新的入口组件', quality_loss: 'LOW', user_benefit: 'MEDIUM', system_consistency: 'HIGH', stability_risk: 'HIGH', scope: 'component' },
+      { label: 'existing-pattern', approach: '沿用既有入口样式并提高位置', quality_loss: 'LOW', user_benefit: 'MEDIUM', system_consistency: 'NONE', stability_risk: 'NONE', scope: 'component' },
+    ],
+  })
+  assert.equal(consistent.selected_solution, '沿用既有入口样式并提高位置')
+})
+
+test('修复 — user_goal 不再假装由插件推断：未提供时明确报告未识别', () => {
+  const value = decide({
+    confirmation_id: 'C1',
+    current_state: '主按钮为次级尺寸',
+    original_confirmation: '主按钮是否需要更突出？',
+    user_reply: 'C1 修改：把主按钮放大',
+    quality_impact: 'NONE',
+    candidate_solutions: [{ label: 'promote', approach: '提高一个视觉层级', scope: 'component' }],
+  })
+  assert.equal(value.user_goal, '[not identified from the available context]')
+  // The caller's field is the only source: an unknown extra field is ignored.
+  const withBogus = decide({
+    confirmation_id: 'C1',
+    current_state: 'x',
+    original_confirmation: 'y',
+    user_reply: 'z',
+    inferred_user_goal: '插件不该使用这个字段',
+    quality_impact: 'NONE',
+    candidate_solutions: [{ label: 'a', approach: 'b' }],
+  })
+  assert.equal(withBogus.user_goal, '[not identified from the available context]')
+})
+
+test('修复 — NOT_APPLICABLE 是第三种合法 status，且不代表可执行', () => {
+  assert.equal(STATUS.NOT_APPLICABLE, 'NOT_APPLICABLE')
+  const refusal = notApplicableValue({
+    confirmationId: 'C9',
+    currentState: '',
+    originalConfirmation: '',
+    userReply: '',
+    code: 'UNKNOWN_CONFIRMATION_ITEM',
+    reason: 'C9 was never published',
+  })
+  assert.equal(refusal.status, STATUS.NOT_APPLICABLE)
+  assert.equal(refusal.execution_required, false)
+  assert.equal(refusal.selected_solution, 'NONE')
+  assert.equal(refusal.confirmation_state, 'UNCHANGED')
+  assert.match(refusal.notes, /normal DSH rules/)
 })

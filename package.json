@@ -13,8 +13,10 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib/index.js",
-    "cordis.patch.yml"
+    "lib/",
+    "cordis.patch.yml",
+    "README.md",
+    "AGENTS.md"
   ],
   "license": "MIT",
   "engines": {

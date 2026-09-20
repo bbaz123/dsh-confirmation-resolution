@@ -96,15 +96,16 @@ dsh --profile web --dump-config
 
 ```
 register → 登记本轮发布的 C 编号        → STATUS = REGISTERED，状态 PENDING
-decide   → 账本校验 → 决策              → MODIFY：READY_TO_EXECUTE，状态仍为 PENDING
+decide   → 账本校验 → 决策              → MODIFY：READY_TO_EXECUTE，状态 AWAITING_EXECUTION
                                           KEEP_CURRENT：决策即完成 → RESOLVED
 complete → DSH 实际执行成功后调用        → STATUS = REGISTERED，状态 RESOLVED
 ```
 
-**`MODIFY` 决策不等于执行**：`decide` 之后该项仍是 `PENDING`，只有执行成功并调用 `complete` 才变成
-`RESOLVED`。执行失败时不要调用 `complete`，该项保持 `PENDING`，可以再次 `decide`——
-不会出现"执行失败却已被关闭、重试反被判 `ALREADY_RESOLVED`"的情况。
-`KEEP_CURRENT` 是自完成的（不修改本身在决策那一刻就已完成），`complete` 对它幂等。
+**`MODIFY` 决策不等于执行**：`decide` 之后该项进入 **`AWAITING_EXECUTION`**（等待执行），
+只有执行成功并调用 `complete` 才变成 `RESOLVED`。执行失败时不要调用 `complete`，
+该项保持 `AWAITING_EXECUTION`，可以再次 `decide`——不会出现"执行失败却已被关闭、
+重试反被判 `ALREADY_RESOLVED`"的情况。`KEEP_CURRENT` 是自完成的（不修改本身在决策那一刻就已完成），
+`complete` 对它幂等。
 
 四种 STATUS：
 
@@ -115,7 +116,20 @@ complete → DSH 实际执行成功后调用        → STATUS = REGISTERED，�
 | `INSUFFICIENT_CONTEXT` | 信息不足，未做决策 | 补齐 `MISSING_INFORMATION` 后重新 `decide`；该项保持 `PENDING` |
 | `NOT_APPLICABLE` | **守卫拒绝，属于非法调用** | 不重试、不执行，改走正常 DSH 流程 |
 
-`NOT_APPLICABLE` 的触发条件：编号在本会话从未 `register` 过，或已 `RESOLVED` 且未被用新文本重新发布。
+`complete` **只在状态为 `AWAITING_EXECUTION` 时被接受**，因此 `register` 之后直接 `complete`
+会被拒绝（`ITEM_NOT_AWAITING_EXECUTION`）。也就是说"必须经过 decide"是**代码强制**的，
+不是 Prompt 要求——这是这个插件与"只靠提示词约束"的区别所在。
+
+`NOT_APPLICABLE` 的触发条件：编号在本会话从未 `register` 过、已 `RESOLVED` 且未被用新文本重新发布、
+或 `complete` 时没有待执行的 MODIFY 裁决。
+
+### 同一会话里编号可以跨轮复用
+
+一个长会话里完成第一个任务后开始第二个任务时，DSH 很自然又会从 C1 开始编号，**用户仍然只看到 C1**：
+
+- 用**新的确认内容** `register` 该编号 → 开启新一轮，回到 `PENDING`（内部轮次 +1，上一轮的裁决被清空）；
+- 用**完全相同的内容**重复 `register` 已关闭的编号 → 被拒绝（不会复活已结束的项）；
+- 新一轮必须重新 `decide`：**上一轮的裁决不会授权新一轮的 `complete`**。
 
 ## Architecture
 
@@ -150,11 +164,20 @@ lib/
 ## Testing
 
 ```powershell
-npm run test:offline   # 50 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
-npm test               # 69 个用例：上面 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
-npm run verify         # 16 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
+npm run test:offline   # 54 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
+npm test               # 85 个用例：上面 + 端到端生命周期 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
+npm run verify         # 21 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
 npm run check          # 语法 + 全部测试 + 装配验证（需要 DSH）
 ```
+
+`test/e2e-lifecycle.test.mjs` 是端到端叙事测试：走完一个会话的完整生命周期
+（发布 → 登记 → 决策 → **执行失败可重试** → 执行成功关闭 → **新轮复用编号** → 非法调用被拒），
+每一步都断言下一步所依赖的状态，因此流程一旦偏离文档化的状态机就会在偏离处失败。
+它驱动真实注册的工具，所以与 `ledger-guard.test.mjs` 一样需要 DSH。
+
+哪些测试不需要 DSH 是可以精确说明的：`lib/decide.js`、`lib/ledger.js`、`lib/rules.js` **不 import 任何外部包**，
+所以只覆盖它们的用例可完全离线运行；任何 import 到 `lib/index.js` 的用例都会拉入宿主的
+`@deepseek-ai/dsh-tools`，因而必须有 DSH 安装。
 
 测试分两层是有原因的：`lib/decide.js`、`lib/rules.js`、`lib/ledger.js` **不 import 任何外部包**，
 所以纯逻辑与账本单测可完全离线运行；而 `lib/index.js` 必须 import 宿主的 `@deepseek-ai/dsh-tools`
@@ -213,8 +236,8 @@ node tools/materialize-deps.mjs <bundleDir> "$env:USERPROFILE\.dsh\profiles\node
 ```
 
 因此：**在未安装到 profile 的独立副本目录里跑 `npm test` 会因宿主 peer 无法解析而失败**，
-这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 50/50 通过）；
-装进 profile 后再跑 `npm test`（应 69/69）与 `npm run verify`（应 16/16）。
+这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 54/54 通过）；
+装进 profile 后再跑 `npm test`（应 85/85）与 `npm run verify`（应 21/21）。
 
 ### 在目标机器上安装
 

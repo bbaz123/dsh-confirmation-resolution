@@ -27,9 +27,16 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 
 const results = []
-function check(label, fn) {
+/**
+ * Run one check and record its verdict.
+ *
+ * Awaits the body, so an async assertion that rejects is recorded as FAIL rather
+ * than becoming an unhandled rejection that silently leaves the check looking
+ * green — a checking harness that cannot fail is worse than no harness.
+ */
+async function check(label, fn) {
   try {
-    fn()
+    await fn()
     results.push(`PASS  ${label}`)
   } catch (error) {
     results.push(`FAIL  ${label}\n      ${error.message}`)
@@ -74,7 +81,7 @@ for (const root of profileRoots) {
   }
 }
 
-check('row name resolves from the profile install (what the loader imports)', () => {
+await check('row name resolves from the profile install (what the loader imports)', () => {
   assert.notEqual(entryUrl, undefined, `row not linked into a DSH profile:\n      ${resolveFailures.join('\n      ')}`)
   assert.match(entryUrl, /dsh-confirmation-resolution/)
 })
@@ -86,7 +93,7 @@ if (entryUrl === undefined) {
 }
 
 const plugin = await import(entryUrl)
-check('entry exports name/inject/Config/apply', () => {
+await check('entry exports name/inject/Config/apply', () => {
   assert.equal(plugin.name, 'confirmation-resolution')
   assert.deepEqual(plugin.inject, ['tools', 'systemPrompt'])
   assert.equal(typeof plugin.Config, 'function')
@@ -118,41 +125,50 @@ ctx.effect = (callback) => {
   return disposer
 }
 
-check('apply() registers one prompt section and one tool', () => {
+await check('apply() registers one prompt section and one tool', () => {
   plugin.apply(ctx, plugin.Config({}))
   assert.equal(sections.length, 1, `sections=${sections.length}`)
   assert.equal(tools.length, 1, `tools=${tools.length}`)
 })
-check('prompt section carries the spec\'d name, order and rules', () => {
+await check('prompt section carries the spec\'d name, order and rules', () => {
   const section = sections[0]
   assert.equal(section.name, 'confirmation:policy')
   assert.equal(section.order, 116)
   assert.ok(section.text.includes('【待确认事项】'))
   assert.ok(section.text.includes('confirmation_resolution'))
 })
-check('tool definition is registry-ready and named confirmation_resolution', () => {
+await check('tool definition is registry-ready and named confirmation_resolution', () => {
   const tool = tools[0]
   assert.equal(tool.name, 'confirmation_resolution')
   assert.equal(typeof tool.execute, 'function')
   assert.equal(typeof tool.description, 'string')
   assert.ok(tool.output !== undefined && typeof tool.output.render === 'function')
   const schema = tool.parameters
-  for (const field of ['confirmation_id', 'current_state', 'original_confirmation', 'user_reply']) {
+  // The identity fields stay required; `user_reply` is conditionally required
+  // per action, checked by the next assertion.
+  for (const field of ['confirmation_id', 'current_state', 'original_confirmation']) {
     assert.ok(schema.properties[field] !== undefined, `missing parameter ${field}`)
     assert.ok(schema.required.includes(field), `${field} must be required`)
   }
 })
-check('parameter schema exposes the optional context fields', () => {
+await check('parameter schema exposes the optional context fields', () => {
   const schema = tools[0].parameters
   for (const field of ['user_goal', 'relevant_context', 'available_constraints', 'quality_impact', 'candidate_solutions', 'action']) {
     assert.ok(schema.properties[field] !== undefined, `missing parameter ${field}`)
   }
   assert.deepEqual(schema.properties.action.enum, ['register', 'decide', 'complete'])
 })
-check('output schema declares all four statuses and the three ledger states', () => {
+await check('output schema declares all four statuses and the state vocabulary', () => {
   const schema = tools[0].output.schema
   assert.deepEqual(schema.properties.status.enum, ['READY_TO_EXECUTE', 'INSUFFICIENT_CONTEXT', 'REGISTERED', 'NOT_APPLICABLE'])
-  assert.deepEqual(schema.properties.confirmation_state.enum, ['PENDING', 'RESOLVED', 'UNCHANGED'])
+  assert.deepEqual(schema.properties.confirmation_state.enum, ['PENDING', 'AWAITING_EXECUTION', 'RESOLVED', 'UNCHANGED'])
+})
+await check('user_reply is not schema-required (it is conditionally required per action)', () => {
+  const schema = tools[0].parameters
+  assert.ok(!schema.required.includes('user_reply'), 'user_reply must not be unconditionally required')
+  for (const field of ['confirmation_id', 'current_state', 'original_confirmation']) {
+    assert.ok(schema.required.includes(field), `${field} should stay required`)
+  }
 })
 
 // ── 4. execute + render, through the register → decide → complete flow ──────
@@ -169,46 +185,60 @@ const call = {
   candidate_solutions: [{ label: 'promote', approach: '提高一个视觉层级', scope: 'component' }],
 }
 const registered = await tool.execute({ ...call, action: 'register' }, exec)
-check('register reports REGISTERED and PENDING (a write, not a refusal)', () => {
+await check('register reports REGISTERED and PENDING (a write, not a refusal)', () => {
   assert.equal(registered.status, 'REGISTERED')
   assert.equal(registered.confirmation_state, 'PENDING')
   assert.equal(registered.execution_required, false)
 })
+await check('complete cannot skip decide (no MODIFY decision outstanding yet)', async () => {
+  const skipped = await tool.execute({ ...call, action: 'complete' }, exec)
+  assert.equal(skipped.status, 'NOT_APPLICABLE')
+  assert.match(skipped.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+})
+await check('decide without user_reply is refused, naming the real cause', async () => {
+  const noReply = { ...call, action: 'decide' }
+  delete noReply.user_reply
+  const refused = await tool.execute(noReply, exec)
+  assert.equal(refused.status, 'INSUFFICIENT_CONTEXT')
+  assert.match(refused.missing_information, /REQUIRED_FOR_DECIDE/)
+})
 const decision = await tool.execute({ ...call, action: 'decide' }, exec)
-check('decide() returns a spec-shaped MODIFY decision that stays PENDING', () => {
+await check('decide() returns a spec-shaped MODIFY decision awaiting execution', () => {
   assert.equal(decision.action, 'MODIFY')
   assert.equal(decision.status, 'READY_TO_EXECUTE')
-  assert.equal(decision.confirmation_state, 'PENDING')
+  assert.equal(decision.confirmation_state, 'AWAITING_EXECUTION')
   assert.equal(decision.confirmation_id, 'C1')
   assert.equal(decision.execution_required, true)
 })
-check('render() emits the canonical uppercase block', () => {
+await check('render() emits the canonical uppercase block', () => {
   const blocks = tool.output.render({}, decision)
   assert.equal(blocks.length, 1)
   assert.equal(blocks[0].type, 'text')
-  for (const label of ['CONFIRMATION_ID: C1', 'ACTION: MODIFY', 'STATUS: READY_TO_EXECUTE', 'CONFIRMATION_STATE_AFTER: PENDING']) {
+  for (const label of ['CONFIRMATION_ID: C1', 'ACTION: MODIFY', 'STATUS: READY_TO_EXECUTE', 'CONFIRMATION_STATE_AFTER: AWAITING_EXECUTION']) {
     assert.ok(blocks[0].text.includes(label), `missing ${label}`)
   }
 })
 const completed = await tool.execute({ ...call, action: 'complete' }, exec)
-check('complete resolves the item only after execution', () => {
+await check('complete resolves the item only after execution', () => {
   assert.equal(completed.status, 'REGISTERED')
   assert.equal(completed.confirmation_state, 'RESOLVED')
 })
 
 // ── 5. the code-level guard, through the real tool ─────────────────────────
-check('the guard refuses a decided-and-completed item', async () => {
+// NOTE: ordering matters. The round-reuse case reopens C1, so the "already
+// resolved" refusals must be asserted BEFORE it runs.
+await check('the guard refuses a decided-and-completed item', async () => {
   const again = await tool.execute({ ...call, action: 'decide' }, exec)
   assert.equal(again.status, 'NOT_APPLICABLE')
   assert.equal(again.execution_required, false)
   assert.match(again.selection_reason, /ITEM_ALREADY_RESOLVED/)
 })
-check('there is no implicit registration: an unregistered id is refused', async () => {
+await check('there is no implicit registration: an unregistered id is refused', async () => {
   const refused = await tool.execute({ ...call, confirmation_id: 'C7', action: 'decide' }, { agent: { id: 'wiring-other' } })
   assert.equal(refused.status, 'NOT_APPLICABLE')
   assert.match(refused.selection_reason, /UNKNOWN_CONFIRMATION_ITEM/)
 })
-check('a MODIFY without user_goal is refused with the stable reason code', async () => {
+await check('a MODIFY without user_goal is refused with the stable reason code', async () => {
   const noGoal = { ...call, confirmation_id: 'C3' }
   delete noGoal.user_goal
   await tool.execute({ ...noGoal, action: 'register' }, exec)
@@ -216,7 +246,18 @@ check('a MODIFY without user_goal is refused with the stable reason code', async
   assert.equal(refused.status, 'INSUFFICIENT_CONTEXT')
   assert.match(refused.missing_information, /USER_GOAL_REQUIRED_FOR_MODIFY/)
 })
-check('ledgers are session-keyed and resettable', () => {
+await check('a resolved C-number reopens as a new round on new text', async () => {
+  const round2 = await tool.execute({ ...call, action: 'register', original_confirmation: 'C1 第二轮问题？' }, exec)
+  assert.equal(round2.status, 'REGISTERED')
+  assert.equal(round2.confirmation_state, 'PENDING')
+  assert.match(round2.notes, /round 2/)
+})
+await check('the previous round decision cannot authorise the new round', async () => {
+  const skipped = await tool.execute({ ...call, action: 'complete' }, exec)
+  assert.equal(skipped.status, 'NOT_APPLICABLE')
+  assert.match(skipped.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+})
+await check('ledgers are session-keyed and resettable', () => {
   assert.equal(typeof plugin.ledgers, 'object')
   assert.equal(plugin.ledgers.sessionCount >= 1, true)
   plugin.ledgers.clear()
@@ -224,7 +265,7 @@ check('ledgers are session-keyed and resettable', () => {
 })
 
 // ── 6. disposal ────────────────────────────────────────────────────────────
-check('both contributions are reversible effects', () => {
+await check('both contributions are reversible effects', () => {
   assert.equal(disposers.length, 2)
   for (const disposer of disposers) assert.equal(typeof disposer, 'function')
 })

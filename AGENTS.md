@@ -40,12 +40,22 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
   也不要把 03 的规范文本注入 System Prompt。
 - 输出字段名（`confirmation_id`、`action`、`status` …）属于对外契约，改动视为破坏性变更。
 - 扩大插件作用域（例如让它处理普通任务、普通修改）属于破坏 03 §4 的边界，禁止。
-- **状态机不得退回"决策即关闭"**：`register → decide → complete` 三段式是硬约束。
-  `decide` 返回 MODIFY 时该项必须保持 `PENDING`；只有 DSH 执行成功后调用 `complete`（或 KEEP_CURRENT
-  的自完成）才写 `RESOLVED`。否则执行失败会把项目永久关死，重试被判 `ALREADY_RESOLVED`。
+- **状态机是三态的，不得退回两态**：`register → decide → complete` 是硬约束。
+  `decide` 返回 MODIFY 时状态为 **`AWAITING_EXECUTION`**（等待执行），只有 DSH 执行成功后调用
+  `complete`（或 KEEP_CURRENT 自完成）才写 `RESOLVED`；执行失败留在 `AWAITING_EXECUTION` 可重试。
+  若退回"决策即关闭"，执行失败会把项目永久关死；若允许 `register → complete` 直连，
+  就等于把"必须经过 decide"降级成 Prompt 要求——**`complete` 必须只在 `AWAITING_EXECUTION` 时被接受**。
 - **不得引入隐式登记**：未 `register` 的编号必须被拒绝；任何"自带原文即自动补登记"的后门都会削弱守卫。
+- **C 编号跨轮复用**：用新文本 `register` 已 `RESOLVED` 的编号 → 开启新一轮（清空上一轮裁决，轮次 +1）；
+  同文本重复 `register` → 拒绝。新一轮必须重新 `decide`，上一轮裁决不得授权新一轮的 `complete`。
 - 四种 STATUS 语义不得混用：`REGISTERED`（账本写入成功）/ `READY_TO_EXECUTE`（待执行）/
   `INSUFFICIENT_CONTEXT`（保持 PENDING）/ `NOT_APPLICABLE`（守卫拒绝）。
+- **`user_reply` 是按 action 条件必填**（schema 无法表达，故在 `execute()` 里按 action 校验）：
+  `register` 不需要（此时用户还没回复）、`decide` 必须有、`complete` 不需要。
+- **`lib/rules.js` 是模板字符串**：正文里出现裸反引号或 `${` 会截断源码（已踩两次）。
+  `mandatory-scenarios.test.mjs` 有机械检查兜底，但改动时请直接避开。
+- **`verify/wiring.mjs` 的 `check()` 是 async 的**：每个调用都必须 `await`，否则断言失败会变成
+  未处理的 rejection 而被静默忽略——"不会失败的检查器比没有检查器更糟"。
 - **`ACTION = MODIFY` 必须有 `user_goal`**，缺失时返回 `INSUFFICIENT_CONTEXT` +
   `USER_GOAL_REQUIRED_FOR_MODIFY`；`KEEP_CURRENT` 不要求（它不选方案）。
 - 触发保护必须保持两层：`rules.js` + 工具描述（软）+ `execute()` 的账本守卫（硬）。
@@ -58,17 +68,20 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
   或根目录元数据后，必须按 README「重新同步分发副本」一节同步并复验。
   曾因漏做这一步，导致按副本评审时看到的仍是旧代码（旧 `execute`、旧 `addressRootCause`、
   无 `ledger.js`），并因此产生了一整轮无效返工。
-- 测试分两层：`npm run test:offline`（50 用例，纯逻辑 + 账本，不需要 DSH）与
-  `npm test` / `npm run verify`（需要 DSH，因为 `lib/index.js` 依赖宿主 `@deepseek-ai/dsh-tools`，
-  而它的依赖 `dsh-scope`/`dsh-llm`/`dsh-session` 是宿主内部模块、按设计不随包携带）。
+- 测试分三层，**不要混淆**（数字以 `Select-String -Pattern '^test\('` 实测为准）：
+  `npm run test:offline`（54 用例：纯逻辑 + 账本，不需要 DSH）、
+  `npm test`（85 用例：全部，需要 DSH）、`npm run verify`（21 项装配检查，需要 DSH）。
+  凡 import 到 `lib/index.js` 的用例都会拉入宿主 `@deepseek-ai/dsh-tools`，因此**不能**放进离线子集
+  （`e2e-lifecycle.test.mjs` 与 `ledger-guard.test.mjs` 都属于这一类；曾误把 e2e 当离线用例，
+  在分发副本里实测失败才发现）。
   **不要**在未安装到 profile 的独立副本目录里期待 `npm test` 全绿。
 
 ## 构建 / 测试 / 检查命令
 
 ```powershell
-npm run test:offline  # 50 个用例：纯决策算法 + 账本，任何环境（不需要 DSH）
-npm test              # 69 个用例：上面 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
-npm run verify        # node verify/wiring.mjs（真实 Cordis 上下文的装配验证，需要 DSH）
+npm run test:offline  # 54 个用例：纯决策算法 + 账本，任何环境（不需要 DSH）
+npm test              # 85 个用例：全部（含端到端生命周期与真实工具守卫用例，需要 DSH）
+npm run verify        # 21 项：真实 Cordis 上下文的装配验证（需要 DSH）
 npm run check         # 语法检查 + 全部测试 + 装配验证（需要 DSH）
 ```
 

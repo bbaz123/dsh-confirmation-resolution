@@ -14,13 +14,37 @@ import { test } from 'node:test'
 
 import { ConfirmationLedger, ConfirmationLedgers, ITEM_STATE, REJECTION } from '../lib/ledger.js'
 
-test('ledger — 登记后为 PENDING，resolve 后为 RESOLVED', () => {
+test('ledger — 登记后为 PENDING，裁决 MODIFY 后进入 AWAITING_EXECUTION，resolve 后为 RESOLVED', () => {
   const ledger = new ConfirmationLedger()
   assert.equal(ledger.register('C1', { originalConfirmation: 'x' }), ITEM_STATE.PENDING)
   assert.equal(ledger.get('C1').state, ITEM_STATE.PENDING)
+  assert.equal(ledger.markDecided('C1', 'MODIFY'), ITEM_STATE.AWAITING_EXECUTION)
+  assert.equal(ledger.get('C1').state, ITEM_STATE.AWAITING_EXECUTION)
   assert.equal(ledger.resolve('C1'), ITEM_STATE.RESOLVED)
   assert.equal(ledger.get('C1').state, ITEM_STATE.RESOLVED)
-  assert.deepEqual(ledger.snapshot(), [{ id: 'C1', state: 'RESOLVED' }])
+  assert.deepEqual(ledger.snapshot(), [{ id: 'C1', state: 'RESOLVED', round: 1 }])
+})
+
+test('ledger — KEEP_CURRENT 裁决不进入 AWAITING_EXECUTION（没有可执行的动作）', () => {
+  const ledger = new ConfirmationLedger()
+  ledger.register('C1', { originalConfirmation: 'x' })
+  assert.equal(ledger.markDecided('C1', 'KEEP_CURRENT'), ITEM_STATE.PENDING)
+  assert.equal(ledger.decisionOf('C1').action, 'KEEP_CURRENT')
+})
+
+test('ledger — guardComplete 只放行 AWAITING_EXECUTION（这就是"不能跳过 decide"）', () => {
+  const ledger = new ConfirmationLedger()
+  ledger.register('C1', { originalConfirmation: 'x' })
+  // Freshly registered: nothing executable behind it yet.
+  assert.equal(ledger.guardComplete('C1').ok, false)
+  assert.equal(ledger.guardComplete('C1').code, REJECTION.NOT_AWAITING_EXECUTION)
+  ledger.markDecided('C1', 'MODIFY')
+  assert.equal(ledger.guardComplete('C1').ok, true)
+  ledger.resolve('C1')
+  assert.equal(ledger.guardComplete('C1').ok, false)
+  // Unknown id and empty id stay distinguishable.
+  assert.equal(ledger.guardComplete('C9').code, REJECTION.UNKNOWN_ITEM)
+  assert.equal(ledger.guardComplete('').code, REJECTION.EMPTY_ID)
 })
 
 test('ledger — 重复登记同一编号的相同文本不会复活已解决项', () => {
@@ -31,11 +55,16 @@ test('ledger — 重复登记同一编号的相同文本不会复活已解决项
   assert.equal(ledger.get('C1').state, ITEM_STATE.RESOLVED)
 })
 
-test('ledger — 同一编号以新文本重新发布时回到 PENDING', () => {
+test('ledger — 同一编号以新文本重新发布时开启新轮：回到 PENDING 且轮次 +1', () => {
   const ledger = new ConfirmationLedger()
   ledger.register('C1', { originalConfirmation: '旧文本' })
+  ledger.markDecided('C1', 'MODIFY')
   ledger.resolve('C1')
   assert.equal(ledger.register('C1', { originalConfirmation: '新文本' }), ITEM_STATE.PENDING)
+  assert.equal(ledger.decisionOf('C1').round, 2)
+  assert.equal(ledger.decisionOf('C1').action, undefined)
+  // The previous round's decision must not authorise this round's completion.
+  assert.equal(ledger.guardComplete('C1').ok, false)
 })
 
 test('ledger — 未发布过 / 已解决 / 空编号三种拒绝原因可区分', () => {
@@ -83,9 +112,10 @@ test('ledger — 未登记的编号不能直接 resolve（内部一致性）', (
   assert.throws(() => ledger.resolve('C7'), /unknown confirmation item C7/)
 })
 
-test('ledger — 快照是按会话隔离的数据，不含任何实时对象', () => {
+test('ledger — 快照是纯数据（只含 id/state/round），不含任何实时对象', () => {
   const ledger = new ConfirmationLedger()
   ledger.register('C1', { originalConfirmation: 'x' })
   const snapshot = ledger.snapshot()
-  assert.equal(JSON.stringify(snapshot), '[{"id":"C1","state":"PENDING"}]')
+  assert.equal(JSON.stringify(snapshot), '[{"id":"C1","state":"PENDING","round":1}]')
+  assert.deepEqual(Object.keys(snapshot[0]), ['id', 'state', 'round'])
 })

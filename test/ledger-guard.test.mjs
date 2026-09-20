@@ -47,12 +47,16 @@ function makeTool() {
   return tools[0]
 }
 
-/** One well-formed confirmation item whose decision is MODIFY. */
+/**
+ * One well-formed confirmation item whose decision is MODIFY.
+ *
+ * `user_reply` is deliberately NOT part of the base shape: it is conditionally
+ * required (only `decide` needs it), and `register` runs before any reply exists.
+ */
 const item = (id, overrides = {}) => ({
   confirmation_id: id,
   current_state: `${id} 当前状态`,
   original_confirmation: `${id} 是否需要调整？`,
-  user_reply: `${id} 修改`,
   user_goal: `${id} 让入口更容易被发现`,
   quality_impact: 'NONE',
   candidate_solutions: [{ label: 'promote', approach: `${id} 提高一个视觉层级`, scope: 'component' }],
@@ -78,9 +82,9 @@ const execFor = (sessionId) => ({ agent: { id: sessionId } })
 const register = (tool, id, exec, overrides = {}) =>
   tool.execute({ ...item(id, overrides), action: 'register' }, exec)
 
-/** decide → the decision, without closing a MODIFY. */
+/** decide → needs the user's reply, and leaves a MODIFY awaiting execution. */
 const decideItem = (tool, id, exec, overrides = {}) =>
-  tool.execute({ ...item(id, overrides), action: 'decide' }, exec)
+  tool.execute({ ...item(id, { user_reply: `${id} 修改`, ...overrides }), action: 'decide' }, exec)
 
 /** complete → the explicit closure after a successful execution. */
 const completeItem = (tool, id, exec, overrides = {}) =>
@@ -88,7 +92,7 @@ const completeItem = (tool, id, exec, overrides = {}) =>
 
 // ── ① the resolve timing: MODIFY is not closed by the decision ──────────────
 
-test('① register → decide(MODIFY) 后项目仍为 PENDING，直到 complete 才 RESOLVED', async () => {
+test('① register → decide(MODIFY) 后项目进入 AWAITING_EXECUTION，complete 才 RESOLVED', async () => {
   const tool = makeTool()
   const exec = execFor('timing-1')
 
@@ -100,8 +104,8 @@ test('① register → decide(MODIFY) 后项目仍为 PENDING，直到 complete 
   assert.equal(decision.status, 'READY_TO_EXECUTE')
   assert.equal(decision.action, 'MODIFY')
   assert.equal(decision.execution_required, true)
-  // The decision is not the execution.
-  assert.equal(decision.confirmation_state, 'PENDING')
+  // The decision is not the execution: the item now waits for a completion.
+  assert.equal(decision.confirmation_state, 'AWAITING_EXECUTION')
 
   const completed = await completeItem(tool, 'C1', exec)
   assert.equal(completed.status, 'REGISTERED')
@@ -109,20 +113,20 @@ test('① register → decide(MODIFY) 后项目仍为 PENDING，直到 complete 
   assert.equal(completed.execution_required, false)
 })
 
-test('① 执行失败（未 complete）时项目保持 PENDING，可以重新 decide 而不被拒绝', async () => {
+test('① 执行失败（未 complete）时可以重新 decide，且状态停在 AWAITING_EXECUTION', async () => {
   const tool = makeTool()
   const exec = execFor('timing-2')
   await register(tool, 'C1', exec)
   const first = await decideItem(tool, 'C1', exec)
   assert.equal(first.status, 'READY_TO_EXECUTE')
-  assert.equal(first.confirmation_state, 'PENDING')
+  assert.equal(first.confirmation_state, 'AWAITING_EXECUTION')
 
   // The execution failed, so DSH never called complete. Deciding again must work
   // instead of being refused with ALREADY_RESOLVED.
   const second = await decideItem(tool, 'C1', exec)
   assert.equal(second.status, 'READY_TO_EXECUTE')
   assert.equal(second.action, 'MODIFY')
-  assert.equal(second.confirmation_state, 'PENDING')
+  assert.equal(second.confirmation_state, 'AWAITING_EXECUTION')
 
   const completed = await completeItem(tool, 'C1', exec)
   assert.equal(completed.confirmation_state, 'RESOLVED')
@@ -231,7 +235,7 @@ test('③ NOT_APPLICABLE 只表示守卫拒绝：已 RESOLVED 项再 register �
 
 /** An item with the optional user_goal key genuinely absent (not set to undefined). */
 function withoutGoal(id) {
-  const value = item(id)
+  const value = { ...item(id), user_reply: `${id} 修改` }
   delete value.user_goal
   return value
 }
@@ -318,6 +322,129 @@ test('守卫 — INSUFFICIENT_CONTEXT 不关闭确认项，补全上下文后仍
   assert.equal(first.confirmation_state, 'PENDING')
   const second = await decideItem(tool, 'C1', exec)
   assert.equal(second.status, 'READY_TO_EXECUTE')
+})
+
+// ── ⑤ complete 必须证明存在 READY/MODIFY 裁决（不能跳过 decide） ─────────────
+
+test('⑤ register → 直接 complete 被拒绝：complete 必须证明之前有 MODIFY 裁决', async () => {
+  const tool = makeTool()
+  const exec = execFor('skip-1')
+  const registered = await register(tool, 'C1', exec)
+  assert.equal(registered.confirmation_state, 'PENDING')
+
+  const skipped = await completeItem(tool, 'C1', exec)
+  assert.equal(skipped.status, 'NOT_APPLICABLE')
+  assert.match(skipped.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+  assert.equal(skipped.confirmation_state, 'UNCHANGED')
+  assert.equal(skipped.execution_required, false)
+
+  // ...and the item is still open, so the correct path still works.
+  const decided = await decideItem(tool, 'C1', exec)
+  assert.equal(decided.confirmation_state, 'AWAITING_EXECUTION')
+  const completed = await completeItem(tool, 'C1', exec)
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+})
+
+test('⑤ KEEP_CURRENT 裁决后 complete 幂等（没有可执行动作，也没有待授权项）', async () => {
+  const tool = makeTool()
+  const exec = execFor('skip-2')
+  await tool.execute({ ...keepItem('C2'), action: 'register' }, exec)
+  const decided = await tool.execute({ ...keepItem('C2'), action: 'decide' }, exec)
+  assert.equal(decided.confirmation_state, 'RESOLVED')
+  const completed = await tool.execute({ ...keepItem('C2'), action: 'complete' }, exec)
+  assert.equal(completed.status, 'REGISTERED')
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+})
+
+// ── ⑥ 同一 session 内 C 编号跨轮复用 ───────────────────────────────────────
+
+test('⑥ 已 RESOLVED 的 C1 用新文本 register → 开启第 2 轮并回到 PENDING', async () => {
+  const tool = makeTool()
+  const exec = execFor('round-1')
+  await register(tool, 'C1', exec)
+  await decideItem(tool, 'C1', exec)
+  await completeItem(tool, 'C1', exec)
+
+  // Same text: refuses to resurrect a closed item.
+  const sameText = await register(tool, 'C1', exec)
+  assert.equal(sameText.status, 'NOT_APPLICABLE')
+  assert.match(sameText.selection_reason, /ITEM_ALREADY_RESOLVED/)
+
+  // New text: a new round under the same visible number.
+  const round2 = await register(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：另一个问题？', current_state: '第二轮状态' })
+  assert.equal(round2.status, 'REGISTERED')
+  assert.equal(round2.confirmation_state, 'PENDING')
+  assert.match(round2.notes, /round 2/)
+})
+
+test('⑥ 上一轮的 MODIFY 裁决不能授权新一轮的 complete（关键不变量）', async () => {
+  const tool = makeTool()
+  const exec = execFor('round-2')
+  await register(tool, 'C1', exec)
+  await decideItem(tool, 'C1', exec)          // round 1 has an outstanding MODIFY
+  const round2 = await register(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：换一个问题？' })
+  assert.equal(round2.confirmation_state, 'PENDING')
+
+  // The round-1 decision must NOT let round 2 be completed without its own decide.
+  const skipped = await completeItem(tool, 'C1', exec)
+  assert.equal(skipped.status, 'NOT_APPLICABLE')
+  assert.match(skipped.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+
+  const decided = await decideItem(tool, 'C1', exec)
+  assert.equal(decided.confirmation_state, 'AWAITING_EXECUTION')
+  const completed = await completeItem(tool, 'C1', exec)
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+})
+
+test('⑥ 两轮分别使用 C1/C2：第二轮重新从 C1 开始也能正常工作', async () => {
+  const tool = makeTool()
+  const exec = execFor('round-3')
+  for (const id of ['C1', 'C2']) {
+    await register(tool, id, exec)
+    await decideItem(tool, id, exec)
+    await completeItem(tool, id, exec)
+  }
+  // Round 2 under the same two numbers, with new text.
+  for (const id of ['C1', 'C2']) {
+    const again = await register(tool, id, exec, { original_confirmation: `${id} 第二轮问题？` })
+    assert.equal(again.status, 'REGISTERED')
+    assert.equal(again.confirmation_state, 'PENDING')
+    await decideItem(tool, id, exec, { original_confirmation: `${id} 第二轮问题？` })
+    const done = await completeItem(tool, id, exec, { original_confirmation: `${id} 第二轮问题？` })
+    assert.equal(done.confirmation_state, 'RESOLVED')
+  }
+})
+
+// ── ⑦ user_reply 按 action 条件必填 ────────────────────────────────────────
+
+test('⑦ register 与 complete 不需要 user_reply，只有 decide 需要', async () => {
+  const tool = makeTool()
+  const exec = execFor('reply-1')
+
+  const registered = await register(tool, 'C1', exec)   // no user_reply in play
+  assert.equal(registered.status, 'REGISTERED')
+
+  const noReply = await tool.execute({ ...item('C1'), action: 'decide' }, exec)
+  assert.equal(noReply.status, 'INSUFFICIENT_CONTEXT')
+  assert.match(noReply.missing_information, /REQUIRED_FOR_DECIDE/)
+  // The refusal must name the real cause, not a ledger failure.
+  assert.ok(!String(noReply.notes).includes('Ledger guard failed'))
+  assert.equal(noReply.confirmation_state, 'PENDING')
+
+  const decided = await decideItem(tool, 'C1', exec)
+  assert.equal(decided.status, 'READY_TO_EXECUTE')
+  const completed = await completeItem(tool, 'C1', exec)   // no user_reply needed
+  assert.equal(completed.status, 'REGISTERED')
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+})
+
+test('⑦ decide 的 user_reply 为空字符串同样被拒绝（不是"传了就算"）', async () => {
+  const tool = makeTool()
+  const exec = execFor('reply-2')
+  await register(tool, 'C1', exec)
+  const refused = await tool.execute({ ...item('C1'), action: 'decide', user_reply: '   ' }, exec)
+  assert.equal(refused.status, 'INSUFFICIENT_CONTEXT')
+  assert.match(refused.missing_information, /REQUIRED_FOR_DECIDE/)
 })
 
 test('插件入口经真实解析路径可加载，且导出未变', () => {

@@ -180,3 +180,21 @@ test('全部 10 个场景的规则文本都存在于实际注册的 System Promp
   assert.ok(RULES.includes('PENDING'))
   assert.ok(RULES.includes('RESOLVED'))
 })
+
+test('规则文本不得包含反引号（它是模板字符串，裸反引号会截断源码）', () => {
+  // `lib/rules.js` exports its text from a template literal, so a backtick in
+  // the prose terminates the string early and fails at import time. This has
+  // bitten twice; assert it mechanically instead of remembering.
+  assert.equal(RULES.includes('`'), false, 'rules text must not contain a backtick')
+  assert.equal(RULES.includes('${'), false, 'rules text must not contain a template placeholder')
+})
+
+test('规则文本必须描述完整的三态状态机与两个编号复用规则', () => {
+  assert.match(RULES, /AWAITING_EXECUTION/)
+  assert.match(RULES, /register\(C1\)/)
+  assert.match(RULES, /complete\(C1\)/)
+  assert.match(RULES, /complete 必须证明之前有 MODIFY 裁决/)
+  // The prose wraps, so match across newlines rather than assuming one line.
+  assert.match(RULES, /用\s*\*\*新的确认内容\*\*\s*register 时，该编号开启新一轮/)
+  assert.match(RULES, /上一轮的裁决\s*\n?\s*不会授权新一轮的 complete/)
+})

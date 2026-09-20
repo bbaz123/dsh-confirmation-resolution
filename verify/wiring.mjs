@@ -215,6 +215,19 @@ await check('decide() returns a spec-shaped MODIFY decision awaiting execution',
   assert.equal(decision.confirmation_id, 'C1')
   assert.equal(decision.execution_required, true)
 })
+await check('a re-decide that ends INSUFFICIENT_CONTEXT revokes the old authorisation', async () => {
+  const noCandidates = { ...call, action: 'decide' }
+  delete noCandidates.candidate_solutions
+  const insufficient = await tool.execute(noCandidates, exec)
+  assert.equal(insufficient.status, 'INSUFFICIENT_CONTEXT')
+  assert.equal(insufficient.confirmation_state, 'PENDING')
+  const refused = await tool.execute({ ...call, action: 'complete' }, exec)
+  assert.equal(refused.status, 'NOT_APPLICABLE')
+  assert.match(refused.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+  // Restore a real decision so the rest of the flow keeps its prerequisites.
+  const restored = await tool.execute({ ...call, action: 'decide' }, exec)
+  assert.equal(restored.confirmation_state, 'AWAITING_EXECUTION')
+})
 await check('render() emits the canonical uppercase block', () => {
   const blocks = tool.output.render({}, decision)
   assert.equal(blocks.length, 1)

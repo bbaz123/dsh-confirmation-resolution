@@ -125,6 +125,10 @@ decide(C1)    → 账本校验 → 固定决策
 `RESOLVED`；如果修改执行失败，就不要调用 `complete`，确认项保持**等待执行**，可以重新决策、
 重试执行，不会被误判成"已经完成"。`KEEP_CURRENT` 是自完成的——不修改本身在决策那一刻就已完成。
 
+**每一次新的决策都会先废除上一份尚未执行的授权。** 重试 `decide` 时，旧的 MODIFY 授权在重新计算
+**之前**就被撤销；因此如果这次的结果是 `INSUFFICIENT_CONTEXT`，该项回到 `PENDING`，
+`complete` 再也无法拿旧授权把它关掉。不存在"最新判断是信息不足、旧 MODIFY 却仍可完成"这种状态。
+
 ## 插件不会直接修改你的项目
 
 `confirmation_resolution` 只负责：
@@ -247,9 +251,9 @@ lib/
 ## Testing
 
 ```powershell
-npm run test:offline   # 56 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
-npm test               # 88 个用例：上面 + 端到端生命周期 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
-npm run verify         # 22 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
+npm run test:offline   # 58 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
+npm test               # 94 个用例：上面 + 端到端生命周期 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
+npm run verify         # 23 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
 npm run check          # 语法 + 全部测试 + 装配验证（需要 DSH）
 ```
 
@@ -315,8 +319,8 @@ node tools/materialize-deps.mjs <bundleDir> "$env:USERPROFILE\.dsh\profiles\node
 ```
 
 因此：**在未安装到 profile 的独立副本目录里跑 `npm test` 会因宿主 peer 无法解析而失败**，
-这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 56/56 通过）；
-装进 profile 后再跑 `npm test`（应 88/88）与 `npm run verify`（应 22/22）。
+这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 58/58 通过）；
+装进 profile 后再跑 `npm test`（应 94/94）与 `npm run verify`（应 23/23）。
 
 ### 在目标机器上安装
 

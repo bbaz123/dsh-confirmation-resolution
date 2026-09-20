@@ -120,6 +120,20 @@ test('e2e — 完整生命周期：登记 → 决策 → 执行失败可重试 �
   assert.equal(afterFailure.status, 'READY_TO_EXECUTE')
   assert.equal(afterFailure.confirmation_state, 'AWAITING_EXECUTION')
 
+  // ── 重试时信息不足：旧授权必须立刻失效，不能被用来蒙混 complete ───────────
+  const noCandidates = { ...c1(task1C1) }
+  delete noCandidates.candidate_solutions
+  const insufficient = await session.decide(noCandidates)
+  assert.equal(insufficient.status, 'INSUFFICIENT_CONTEXT')
+  assert.equal(insufficient.confirmation_state, 'PENDING')
+  const staleAttempt = await session.complete(c1(task1C1))
+  assert.equal(staleAttempt.status, 'NOT_APPLICABLE')
+  assert.match(staleAttempt.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+
+  // ── 补齐信息后重新 decide，重新获得授权 ─────────────────────────────────
+  const reDecided = await session.decide(c1(task1C1))
+  assert.equal(reDecided.confirmation_state, 'AWAITING_EXECUTION')
+
   // ── 执行成功 → complete → RESOLVED ───────────────────────────────────────
   const doneC1 = await session.complete(c1(task1C1))
   assert.equal(doneC1.status, 'REGISTERED')

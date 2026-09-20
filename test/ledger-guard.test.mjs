@@ -472,6 +472,66 @@ test('⑦ decide 的 user_reply 为空字符串同样被拒绝（不是"传了�
   assert.match(refused.missing_information, /REQUIRED_FOR_DECIDE/)
 })
 
+// ── ⑧ 重新 decide 必须先废除上一份 MODIFY 授权 ─────────────────────────────
+
+test('⑧ 二次 decide 变成信息不足时，上一份 MODIFY 授权立即失效', async () => {
+  const tool = makeTool()
+  const exec = execFor('stale-1')
+  await register(tool, 'C1', exec)
+  const first = await decideItem(tool, 'C1', exec)
+  assert.equal(first.confirmation_state, 'AWAITING_EXECUTION')
+
+  // Retry the decision without the evidence a MODIFY needs.
+  const noCandidates = { ...item('C1', { user_reply: 'C1 修改' }), action: 'decide' }
+  delete noCandidates.candidate_solutions
+  const second = await tool.execute(noCandidates, exec)
+  assert.equal(second.status, 'INSUFFICIENT_CONTEXT')
+  assert.equal(second.confirmation_state, 'PENDING')
+
+  // The stale authorisation must be gone: complete has nothing to close.
+  const refused = await completeItem(tool, 'C1', exec)
+  assert.equal(refused.status, 'NOT_APPLICABLE')
+  assert.match(refused.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
+  assert.equal(refused.confirmation_state, 'UNCHANGED')
+})
+
+test('⑧ 补齐信息后重新 decide 可以再次获得授权并完成', async () => {
+  const tool = makeTool()
+  const exec = execFor('stale-2')
+  await register(tool, 'C1', exec)
+  await decideItem(tool, 'C1', exec)
+  const noCandidates = { ...item('C1', { user_reply: 'C1 修改' }), action: 'decide' }
+  delete noCandidates.candidate_solutions
+  await tool.execute(noCandidates, exec)
+
+  const again = await decideItem(tool, 'C1', exec)
+  assert.equal(again.confirmation_state, 'AWAITING_EXECUTION')
+  const completed = await completeItem(tool, 'C1', exec)
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+})
+
+test('⑧ 二次 decide 仍为 MODIFY 时，授权被刷新而不是叠加', async () => {
+  const tool = makeTool()
+  const exec = execFor('stale-3')
+  await register(tool, 'C1', exec)
+  await decideItem(tool, 'C1', exec)
+  const retry = await decideItem(tool, 'C1', exec)
+  assert.equal(retry.confirmation_state, 'AWAITING_EXECUTION')
+  const completed = await completeItem(tool, 'C1', exec)
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+  // Only one authorisation existed, so a second complete is a no-op, not a second close.
+  const again = await completeItem(tool, 'C1', exec)
+  assert.equal(again.confirmation_state, 'RESOLVED')
+  assert.match(again.selection_reason, /already RESOLVED/)
+})
+
+test('⑧ 工具描述与 rules.js 的状态说法一致（不得出现"仍为 PENDING"）', async () => {
+  const description = makeTool().description
+  assert.ok(!description.includes('仍为 PENDING'), 'tool description must not claim PENDING after a MODIFY')
+  assert.ok(description.includes('AWAITING_EXECUTION'), 'tool description must name AWAITING_EXECUTION')
+  assert.ok(!/保持 PENDING/.test(description), 'tool description must not claim PENDING after failed execution')
+})
+
 test('插件入口经真实解析路径可加载，且导出未变', () => {
   assert.ok(pathToFileURL(process.cwd()).href.length > 0)
   assert.equal(plugin.name, 'confirmation-resolution')

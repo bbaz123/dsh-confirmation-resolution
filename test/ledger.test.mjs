@@ -111,6 +111,32 @@ test('ledger — 同一编号跨轮复用：新文本替换旧文本，但裁决
   assert.equal(ledger.decisionOf('C1').round, 2)
 })
 
+test('ledger — beginDecision 撤销上一份 MODIFY 授权，绝不让陈旧授权存活', () => {
+  const ledger = new ConfirmationLedger()
+  ledger.register('C1', { originalConfirmation: 'x' })
+  ledger.markDecided('C1', 'MODIFY')
+  assert.equal(ledger.get('C1').state, ITEM_STATE.AWAITING_EXECUTION)
+  assert.equal(ledger.guardComplete('C1').ok, true)
+
+  // A new attempt supersedes the old authorisation BEFORE the new decision exists.
+  assert.equal(ledger.beginDecision('C1'), ITEM_STATE.PENDING)
+  assert.equal(ledger.get('C1').state, ITEM_STATE.PENDING)
+  assert.equal(ledger.decisionOf('C1').action, undefined)
+  assert.equal(ledger.guardComplete('C1').ok, false)
+  assert.equal(ledger.guardComplete('C1').code, REJECTION.NOT_AWAITING_EXECUTION)
+})
+
+test('ledger — beginDecision 在 PENDING 上是无害的，对未知/已解决项抛错', () => {
+  const ledger = new ConfirmationLedger()
+  ledger.register('C1', { originalConfirmation: 'x' })
+  assert.equal(ledger.beginDecision('C1'), ITEM_STATE.PENDING)
+  assert.throws(() => ledger.beginDecision('C9'), /unknown confirmation item C9/)
+  assert.throws(() => ledger.beginDecision(''), /confirmation_id is empty/)
+  ledger.markDecided('C1', 'MODIFY')
+  ledger.resolve('C1')
+  assert.throws(() => ledger.beginDecision('C1'), /cannot re-decide resolved/)
+})
+
 test('ledger — 编号仍在使用时 register 直接抛错（即使绕过 index.js 也覆盖不了）', () => {
   // PENDING
   const pending = new ConfirmationLedger()

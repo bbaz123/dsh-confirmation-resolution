@@ -60,8 +60,9 @@ QUALITY_IMPACT
 ## 安装与生效
 
 ```powershell
-# 安装（已完成）：把本地包链接进 profile 并加入 dsh.profile.bundles
-dsh plugin --profile web add C:\Users\a1941\Desktop\DeepSeek\dsh-confirmation-resolution
+# 把本地包链接进 profile 并加入 dsh.profile.bundles
+dsh plugin --profile <profile> add <本仓库路径>
+# 例：dsh plugin --profile web add C:\Users\<你>\Desktop\dsh-confirmation-resolution
 ```
 
 行由 bundle 补丁 `cordis.patch.yml` 插入宿主组合，因此**需要重启 DSH Web 进程**才会加载
@@ -70,10 +71,15 @@ dsh plugin --profile web add C:\Users\a1941\Desktop\DeepSeek\dsh-confirmation-re
 ## 验证
 
 ```powershell
-npm test        # 36 个用例，含 10 个强制场景
-npm run verify  # 真实 Cordis 上下文 + 真实 defineTool 的装配验证
-npm run check   # 语法 + 测试 + 装配
+npm test        # 36 个用例，含 10 个强制场景（纯函数，不需要 DSH）
+npm run verify  # 真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要已安装 DSH）
+npm run check   # 语法 + 测试 + 装配（需要 DSH）
 ```
+
+`npm test` 只依赖 `lib/` 里的纯函数（`decide.js`、`rules.js`），因此在任何机器上都能直接跑。
+`npm run verify` 需要真实的 DSH 安装：它用 `DSH_HOME`（默认 `~/.dsh`）与 `DSH_PROFILE`（默认 `web`）
+定位 profile 的 `node_modules`，没有硬编码的机器路径；找不到 DSH 时以退出码 2 明确报错，
+**不会把"没能执行"当成通过**。
 
 另外两项组合层验证：
 
@@ -85,14 +91,14 @@ dsh --profile <临时 profile> --dump-config   # 只装配 tools/system-prompt +
 `dsh` 启动时会执行 `assertEntriesActivated`：任何一条行无法解析或无法激活都会让整个 profile 启动失败，
 因此 `--dump-config` 退出码 0 等价于「该行已成功解析并激活」。
 
-## 打包分发（桌面副本）
+## 打包分发（自包含副本）
 
-桌面包 `C:\Users\a1941\Desktop\dsh-confirmation-resolution`（及同名 `.zip`）是与本目录内容一致的
-**自包含分发副本**，用于备份或搬到另一台机器：
+除本仓库外，另有一份与本目录内容一致的**自包含分发副本**（同名目录及同名 `.zip`），用于离线备份或搬到另一台机器：
 
 - **随包携带**：`lib/`、`test/`、`verify/`、`tools/`、`cordis.patch.yml`、`package.json`、`README.md`、`AGENTS.md`，
-  以及 `node_modules` 中的直接依赖闭包 —— `@deepseek-ai/dsh-tools`、`schemastery`、`cordis` 及三者的运行期依赖
-  （`cosmokit`、`dsh-brand`、`dsh-util-values`、`@standard-schema/spec`，共 7 个包）。
+  以及 `node_modules` 中的直接依赖闭包 —— `@deepseek-ai/dsh-tools`、`@deepseek-ai/schemastery`、
+  `@deepseek-ai/cordis` 及三者的运行期依赖（`@deepseek-ai/cosmokit`、`@deepseek-ai/dsh-brand`、
+  `@deepseek-ai/dsh-util-values`、`@standard-schema/spec`，共 7 个包）。
   依赖是**真实目录副本**而非目录链接，因此移动或解压后仍然可用。
 - **不随包携带**：目标 DSH 自身提供的 peer 包（`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、
   `dsh-invariants`、`dsh-system-prompt`、`cordis-plugin-loader` 等）。这是刻意的：这些是**宿主内部模块**，

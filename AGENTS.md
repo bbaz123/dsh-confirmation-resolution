@@ -43,7 +43,7 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
 ## 构建 / 测试 / 检查命令
 
 ```powershell
-npm test        # node --test "test/*.test.mjs"（32 个用例，含 10 个强制场景）
+npm test        # node --test "test/*.test.mjs"（36 个用例，含 10 个强制场景；不需要 DSH）
 npm run verify  # node verify/wiring.mjs（真实 Cordis 上下文的装配验证）
 npm run check   # 语法检查 + 测试 + 装配验证
 ```
@@ -56,6 +56,9 @@ npm run check   # 语法检查 + 测试 + 装配验证
 ```powershell
 dsh --profile web --dump-config   # 退出码 0 且包含 id: confirmation-resolution
 ```
+
+`npm run verify` 同样需要 DSH：它按 `DSH_HOME`（默认 `~/.dsh`）与 `DSH_PROFILE`（默认 `web`）
+定位 profile 的 `node_modules`，没有硬编码的机器路径；找不到 DSH 时退出码为 2，不得当作通过。
 
 ## 需要谨慎修改的区域
 

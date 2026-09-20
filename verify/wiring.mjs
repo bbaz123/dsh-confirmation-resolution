@@ -3,7 +3,9 @@
  *
  * Proves more than a syntax check:
  *   1. the plugin module imports through the SAME bare-specifier resolution the
- *      loader uses at boot (Node ESM resolution from the profile's install);
+ *      loader uses at boot (Node ESM resolution from the profile's install).
+ *      This step needs a DSH install; the profile is located through DSH_HOME /
+ *      DSH_PROFILE and is never hard-coded to one machine;
  *   2. `apply()` registers exactly one prompt section and one tool on a real
  *      Cordis context, with the spec'd name and section metadata;
  *   3. the tool definition passes the real `defineTool` validation from
@@ -13,14 +15,17 @@
  *   5. both contributions are disposed with their fiber (no leaked effects).
  *
  * Run: `node verify/wiring.mjs`
+ * Env: DSH_HOME (default ~/.dsh), DSH_PROFILE (default web)
  */
 
 import assert from 'node:assert/strict'
-import { Context } from '@deepseek-ai/cordis'
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { Context } from '@deepseek-ai/cordis'
 
-const require = createRequire(import.meta.url)
 const results = []
 function check(label, fn) {
   try {
@@ -33,12 +38,52 @@ function check(label, fn) {
 }
 
 // ── 1. loader-equivalent resolution of the installed row name ───────────────
-const profileRequire = createRequire('C:/Users/a1941/.dsh/profiles/web/node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js')
+// The loader resolves the row name from the profile's node_modules — that is
+// where the plugin is linked — so the directory itself is the resolution base.
+// It is discovered from the environment, not hard-coded to one machine.
+const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
+const profileName = process.env.DSH_PROFILE || 'web'
+const profileRoots = [
+  join(dshHome, 'profiles', profileName, 'node_modules'),
+  join(dshHome, 'profiles', 'node_modules'),
+].filter((root) => existsSync(root))
+
+if (profileRoots.length === 0) {
+  console.error(
+    'verify needs a DSH install: no profile node_modules directory was found.\n' +
+      'looked in:\n' +
+      `  ${join(dshHome, 'profiles', profileName, 'node_modules')}\n` +
+      `  ${join(dshHome, 'profiles', 'node_modules')}\n` +
+      'set DSH_HOME (and optionally DSH_PROFILE) to point at your DSH install.\n' +
+      '(`npm test` alone does not need DSH and runs anywhere.)',
+  )
+  process.exit(2)
+}
+
 let entryUrl
+const resolveFailures = []
+for (const root of profileRoots) {
+  try {
+    // Any path inside the directory works as a base: packages may live in this
+    // node_modules or in the shared parent, so the loader file need not exist.
+    const rootRequire = createRequire(join(root, 'index.js'))
+    entryUrl = pathToFileURL(rootRequire.resolve('dsh-plugin-confirmation-resolution')).href
+    break
+  } catch (error) {
+    resolveFailures.push(`${root}: ${error.message.split('\n')[0]}`)
+  }
+}
+
 check('row name resolves from the profile install (what the loader imports)', () => {
-  entryUrl = pathToFileURL(profileRequire.resolve('dsh-plugin-confirmation-resolution')).href
+  assert.notEqual(entryUrl, undefined, `row not linked into a DSH profile:\n      ${resolveFailures.join('\n      ')}`)
   assert.match(entryUrl, /dsh-confirmation-resolution/)
 })
+
+if (entryUrl === undefined) {
+  console.log(results.join('\n'))
+  console.log('\n0 wiring checks passed — install the row first (dsh plugin --profile <profile> add <dir>)')
+  process.exit(1)
+}
 
 const plugin = await import(entryUrl)
 check('entry exports name/inject/Config/apply', () => {

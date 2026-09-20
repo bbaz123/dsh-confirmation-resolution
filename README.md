@@ -70,7 +70,7 @@ dsh plugin --profile web add C:\Users\a1941\Desktop\DeepSeek\dsh-confirmation-re
 ## 验证
 
 ```powershell
-npm test        # 32 个用例，含 10 个强制场景
+npm test        # 36 个用例，含 10 个强制场景
 npm run verify  # 真实 Cordis 上下文 + 真实 defineTool 的装配验证
 npm run check   # 语法 + 测试 + 装配
 ```
@@ -84,6 +84,40 @@ dsh --profile <临时 profile> --dump-config   # 只装配 tools/system-prompt +
 
 `dsh` 启动时会执行 `assertEntriesActivated`：任何一条行无法解析或无法激活都会让整个 profile 启动失败，
 因此 `--dump-config` 退出码 0 等价于「该行已成功解析并激活」。
+
+## 打包分发（桌面副本）
+
+桌面包 `C:\Users\a1941\Desktop\dsh-confirmation-resolution`（及同名 `.zip`）是与本目录内容一致的
+**自包含分发副本**，用于备份或搬到另一台机器：
+
+- **随包携带**：`lib/`、`test/`、`verify/`、`tools/`、`cordis.patch.yml`、`package.json`、`README.md`、`AGENTS.md`，
+  以及 `node_modules` 中的直接依赖闭包 —— `@deepseek-ai/dsh-tools`、`schemastery`、`cordis` 及三者的运行期依赖
+  （`cosmokit`、`dsh-brand`、`dsh-util-values`、`@standard-schema/spec`，共 7 个包）。
+  依赖是**真实目录副本**而非目录链接，因此移动或解压后仍然可用。
+- **不随包携带**：目标 DSH 自身提供的 peer 包（`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、
+  `dsh-invariants`、`dsh-system-prompt`、`cordis-plugin-loader` 等）。这是刻意的：这些是**宿主内部模块**，
+  自带副本会造成模块身份冲突。目标机器上必须已安装 DSH。
+- 依赖闭包由 `tools/materialize-deps.mjs` 生成，可重复执行：
+
+```powershell
+node tools/materialize-deps.mjs <bundleDir> "$env:USERPROFILE\.dsh\profiles\node_modules"
+```
+
+在目标机器上安装（DSH 已安装的前提下）：
+
+```powershell
+dsh plugin --profile <profile> add <解压目录>
+# 例：dsh plugin --profile web add C:\Users\<你>\Desktop\dsh-confirmation-resolution
+# 然后重启 DSH 使宿主组合重新加载
+```
+
+验证安装：(a) 解压目录内 `npm test` 应 36 项全通过、`npm run verify` 应 9/9 通过；
+(b) `dsh --profile <profile> --dump-config` 退出码为 0 且输出包含 `id: confirmation-resolution`
+（退出码 0 即代表该行已解析并激活，因为 DSH 的启动审计会让任何未激活的行导致整个 profile 启动失败）。
+
+兼容性：依赖闭包版本与打包时的 DSH 一致（`dsh-tools`/`dsh-brand`/`dsh-util-values` 为 `0.1.5-rc.2`，
+`cordis` 为 `4.0.2`，`schemastery` 为 `3.18.2`）。目标机器 DSH 版本差异较大时，用上面的
+`materialize-deps.mjs` 按目标机器重新生成依赖闭包。
 
 ## 卸载
 

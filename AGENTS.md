@@ -45,13 +45,23 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
 - 账本按会话隔离，且**不持久化**（DSH 重启即空）。改成持久化属于契约变更，需先确认。
 - 测试涉及账本时必须用**每用例唯一的会话 ID**：`ledgers` 是模块级共享状态，
   复用会话号会让用例互相污染（已实测踩过）。
+- **存在第二份"分发副本"`C:\Users\a1941\Desktop\dsh-confirmation-resolution`（非仓库）。**
+  它不是本仓库的一部分，**不会自动跟随更新**。改动 `lib/`、`test/`、`verify/`、`tools/`
+  或根目录元数据后，必须按 README「重新同步分发副本」一节同步并复验。
+  曾因漏做这一步，导致按副本评审时看到的仍是旧代码（旧 `execute`、旧 `addressRootCause`、
+  无 `ledger.js`），并因此产生了一整轮无效返工。
+- 测试分两层：`npm run test:offline`（50 用例，纯逻辑 + 账本，不需要 DSH）与
+  `npm test` / `npm run verify`（需要 DSH，因为 `lib/index.js` 依赖宿主 `@deepseek-ai/dsh-tools`，
+  而它的依赖 `dsh-scope`/`dsh-llm`/`dsh-session` 是宿主内部模块、按设计不随包携带）。
+  **不要**在未安装到 profile 的独立副本目录里期待 `npm test` 全绿。
 
 ## 构建 / 测试 / 检查命令
 
 ```powershell
-npm test        # node --test "test/*.test.mjs"（59 个用例，含 10 个强制场景 + 守卫用例；不需要 DSH）
-npm run verify  # node verify/wiring.mjs（真实 Cordis 上下文的装配验证）
-npm run check   # 语法检查 + 测试 + 装配验证
+npm run test:offline  # 50 个用例：纯决策算法 + 账本，任何环境（不需要 DSH）
+npm test              # 62 个用例：上面 + 驱动真实注册工具的守卫用例（需要 DSH）
+npm run verify        # node verify/wiring.mjs（真实 Cordis 上下文的装配验证，需要 DSH）
+npm run check         # 语法检查 + 全部测试 + 装配验证（需要 DSH）
 ```
 
 本项目没有编译、打包、lint、type check 步骤；`npm run check` 即是完整门禁。

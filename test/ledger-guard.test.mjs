@@ -14,8 +14,9 @@ import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import { pathToFileURL } from 'node:url'
 
-import { ConfirmationLedger, ConfirmationLedgers, ITEM_STATE, REJECTION } from '../lib/ledger.js'
-
+// NOTE: this file drives the REAL registered tool, so it needs the host's
+// `@deepseek-ai/dsh-tools` and therefore a DSH installation. The pure ledger
+// unit tests live in `ledger.test.mjs`, which runs offline.
 const plugin = await import('../lib/index.js')
 
 /** Drive the real registered tool: apply() on a Context, then execute() per item. */
@@ -54,61 +55,6 @@ const item = (id, overrides = {}) => ({
 
 /** The `exec` the runtime hands a tool: the calling agent carries the SessionId. */
 const execFor = (sessionId) => ({ agent: { id: sessionId } })
-
-// ── ledger as a data structure ──────────────────────────────────────────────
-
-test('ledger — 登记后为 PENDING，resolve 后为 RESOLVED', () => {
-  const ledger = new ConfirmationLedger()
-  assert.equal(ledger.register('C1', { originalConfirmation: 'x' }), ITEM_STATE.PENDING)
-  assert.equal(ledger.get('C1').state, ITEM_STATE.PENDING)
-  assert.equal(ledger.resolve('C1'), ITEM_STATE.RESOLVED)
-  assert.equal(ledger.get('C1').state, ITEM_STATE.RESOLVED)
-  assert.deepEqual(ledger.snapshot(), [{ id: 'C1', state: 'RESOLVED' }])
-})
-
-test('ledger — 重复登记同一编号的相同文本不会复活已解决项', () => {
-  const ledger = new ConfirmationLedger()
-  ledger.register('C1', { originalConfirmation: '原文本' })
-  ledger.resolve('C1')
-  assert.equal(ledger.register('C1', { originalConfirmation: '原文本' }), ITEM_STATE.RESOLVED)
-  assert.equal(ledger.get('C1').state, ITEM_STATE.RESOLVED)
-})
-
-test('ledger — 同一编号以新文本重新发布时回到 PENDING', () => {
-  const ledger = new ConfirmationLedger()
-  ledger.register('C1', { originalConfirmation: '旧文本' })
-  ledger.resolve('C1')
-  assert.equal(ledger.register('C1', { originalConfirmation: '新文本' }), ITEM_STATE.PENDING)
-})
-
-test('ledger — 未发布过 / 已解决 / 空编号三种拒绝原因可区分', () => {
-  const ledger = new ConfirmationLedger()
-  assert.equal(ledger.guard('C9').code, REJECTION.UNKNOWN_ITEM)
-  assert.equal(ledger.guard('').code, REJECTION.EMPTY_ID)
-  ledger.register('C1', { originalConfirmation: 'x' })
-  assert.equal(ledger.guard('C1').ok, true)
-  ledger.resolve('C1')
-  assert.equal(ledger.guard('C1').code, REJECTION.ALREADY_RESOLVED)
-})
-
-test('ledger — 编号按数字顺序快照（C2 在 C10 之前）', () => {
-  const ledger = new ConfirmationLedger()
-  for (const id of ['C10', 'C2', 'C1']) ledger.register(id, { originalConfirmation: id })
-  assert.deepEqual(ledger.snapshot().map((entry) => entry.id), ['C1', 'C2', 'C10'])
-})
-
-test('ledger — 会话之间完全隔离，clear 清空全部', () => {
-  const ledgers = new ConfirmationLedgers()
-  ledgers.for('ledger-a').register('C1', { originalConfirmation: 'a' })
-  assert.equal(ledgers.for('ledger-a').get('C1') !== undefined, true)
-  assert.equal(ledgers.for('ledger-b').get('C1'), undefined)
-  assert.equal(ledgers.sessionCount, 2)
-  ledgers.clear()
-  assert.equal(ledgers.sessionCount, 0)
-  // A cleared store simply starts a fresh, empty ledger for the same session.
-  assert.equal(ledgers.for('ledger-a').get('C1'), undefined)
-  assert.equal(ledgers.for('ledger-a').size(), 0)
-})
 
 // ── the guard, through the real registered tool ─────────────────────────────
 

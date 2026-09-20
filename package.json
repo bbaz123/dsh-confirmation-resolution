@@ -24,8 +24,9 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
+    "test:offline": "node --test \"test/decide.test.mjs\" \"test/ledger.test.mjs\" \"test/mandatory-scenarios.test.mjs\"",
     "verify": "node verify/wiring.mjs",
-    "check": "node --check lib/index.js && node --check lib/decide.js && node --check lib/rules.js && node --test \"test/*.test.mjs\" && node verify/wiring.mjs"
+    "check": "node --check lib/index.js && node --check lib/decide.js && node --check lib/ledger.js && node --check lib/rules.js && node --test \"test/*.test.mjs\" && node verify/wiring.mjs"
   },
   "dsh": {
     "bundle": {

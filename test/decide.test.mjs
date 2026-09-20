@@ -380,3 +380,58 @@ test('算法顺序 — ACTION 只由 QUALITY_IMPACT 与 USER_IMPACT_IF_UNCHANGED
     assert.equal(value.action, item.expected, `quality=${item.quality} user=${item.user}`)
   }
 })
+
+// ── 复核修复的回归用例（2026-09-20） ────────────────────────────────────────
+
+test('回归 — 声明 preference_only 但未给 quality_impact 时，不得再向用户索要确认', () => {
+  const value = decide({
+    confirmation_id: 'C2',
+    current_state: '卡片使用系统默认圆角与阴影',
+    original_confirmation: '是否更换卡片视觉样式？',
+    user_reply: 'C2 换掉',
+    preference_only: true,
+  })
+  assert.equal(value.status, 'READY_TO_EXECUTE')
+  assert.equal(value.action, 'KEEP_CURRENT')
+  assert.equal(value.user_impact_if_unchanged, 'NONE')
+  assert.match(value.quality_evidence, /preference-only/)
+  assert.match(value.notes, /preference/i)
+})
+
+test('回归 — 调用方显式声明"保持现状不影响使用"(NONE) 时，不得升级为 INSUFFICIENT_CONTEXT', () => {
+  const value = decide({
+    confirmation_id: 'C2',
+    current_state: '次要卡片为默认样式',
+    original_confirmation: '是否调整？',
+    user_reply: 'C2 调整',
+    quality_impact: 'LOW',
+    user_impact_if_unchanged: 'NONE',
+  })
+  assert.equal(value.status, 'READY_TO_EXECUTE')
+  assert.equal(value.action, 'KEEP_CURRENT')
+  assert.equal(value.execution_required, false)
+})
+
+test('回归 — QUALITY_IMPACT=NONE 时 USER_IMPACT_IF_UNCHANGED 必须为 NONE（该维度未被评估）', () => {
+  const value = decide(baseCall({
+    quality_impact: 'NONE',
+    user_impact_dimensions: { core_task_blocked: 'HIGH' },
+  }))
+  assert.equal(value.action, 'MODIFY')
+  assert.equal(value.quality_impact, 'NONE')
+  assert.equal(value.user_impact_if_unchanged, 'NONE')
+})
+
+test('回归 — INSUFFICIENT_CONTEXT 不得虚报未评估的维度等级', () => {
+  const undecided = decide({
+    confirmation_id: 'C1',
+    current_state: '表单校验提示为行内文本',
+    original_confirmation: '提示是否需要换一种呈现？',
+    user_reply: 'C1 修改',
+  })
+  assert.equal(undecided.status, 'INSUFFICIENT_CONTEXT')
+  assert.equal(undecided.quality_impact, 'NONE')
+  assert.equal(undecided.user_impact_if_unchanged, 'NONE')
+  assert.match(undecided.quality_evidence, /unknown/)
+  assert.match(undecided.user_impact_evidence, /unknown/)
+})

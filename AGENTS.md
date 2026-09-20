@@ -40,8 +40,16 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
   也不要把 03 的规范文本注入 System Prompt。
 - 输出字段名（`confirmation_id`、`action`、`status` …）属于对外契约，改动视为破坏性变更。
 - 扩大插件作用域（例如让它处理普通任务、普通修改）属于破坏 03 §4 的边界，禁止。
-- **触发保护必须保持两层**：`rules.js` + 工具描述（软）+ `execute()` 的账本守卫（硬）。
-  不得把守卫降级为"仅靠 Prompt 约束"；`decide()` 必须保持纯函数，状态与守卫放在 `index.js`/`ledger.js`。
+- **状态机不得退回"决策即关闭"**：`register → decide → complete` 三段式是硬约束。
+  `decide` 返回 MODIFY 时该项必须保持 `PENDING`；只有 DSH 执行成功后调用 `complete`（或 KEEP_CURRENT
+  的自完成）才写 `RESOLVED`。否则执行失败会把项目永久关死，重试被判 `ALREADY_RESOLVED`。
+- **不得引入隐式登记**：未 `register` 的编号必须被拒绝；任何"自带原文即自动补登记"的后门都会削弱守卫。
+- 四种 STATUS 语义不得混用：`REGISTERED`（账本写入成功）/ `READY_TO_EXECUTE`（待执行）/
+  `INSUFFICIENT_CONTEXT`（保持 PENDING）/ `NOT_APPLICABLE`（守卫拒绝）。
+- **`ACTION = MODIFY` 必须有 `user_goal`**，缺失时返回 `INSUFFICIENT_CONTEXT` +
+  `USER_GOAL_REQUIRED_FOR_MODIFY`；`KEEP_CURRENT` 不要求（它不选方案）。
+- 触发保护必须保持两层：`rules.js` + 工具描述（软）+ `execute()` 的账本守卫（硬）。
+  `decide()` 必须保持纯函数，状态与守卫放在 `index.js`/`ledger.js`。
 - 账本按会话隔离，且**不持久化**（DSH 重启即空）。改成持久化属于契约变更，需先确认。
 - 测试涉及账本时必须用**每用例唯一的会话 ID**：`ledgers` 是模块级共享状态，
   复用会话号会让用例互相污染（已实测踩过）。
@@ -59,7 +67,7 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
 
 ```powershell
 npm run test:offline  # 50 个用例：纯决策算法 + 账本，任何环境（不需要 DSH）
-npm test              # 62 个用例：上面 + 驱动真实注册工具的守卫用例（需要 DSH）
+npm test              # 69 个用例：上面 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
 npm run verify        # node verify/wiring.mjs（真实 Cordis 上下文的装配验证，需要 DSH）
 npm run check         # 语法检查 + 全部测试 + 装配验证（需要 DSH）
 ```

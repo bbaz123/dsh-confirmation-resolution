@@ -51,20 +51,29 @@ dsh-confirmation-resolution/
 | 软保护 | `rules.js` 段落 + 工具描述 | 告诉模型何时该调用、何时不该调用 |
 | **硬保护** | `index.js` 的 `execute()` + `ledger.js` | 真正拒绝非法调用，不依赖模型遵守 Prompt |
 
-`execute()` 在计算任何决策之前先过会话账本：
+`execute()` 是**账本状态的唯一写入者**，三个动作把同一个确认项推进完整状态机：
 
 ```
-action="register"  → 记录本轮发布的 C 编号，不做决策
-action="resolve"（默认） → 账本校验 → 通过才进入 decide()
+register → 登记编号            → STATUS = REGISTERED，状态 PENDING
+decide   → 账本校验 → decide()  → MODIFY：READY_TO_EXECUTE，状态仍为 PENDING
+                                  KEEP_CURRENT：决策即完成 → RESOLVED
+complete → DSH 实际执行成功后   → STATUS = REGISTERED，状态 RESOLVED
 ```
+
+**MODIFY 决策不等于执行**：`decide` 返回后该项仍是 `PENDING`，只有执行成功并调用 `complete` 才变成
+`RESOLVED`。执行失败时**不要**调用 `complete`，该项保持 `PENDING`，可以再次 `decide`——
+不会出现"执行失败却已被关闭、重试反被判 `ALREADY_RESOLVED`"的情况。`KEEP_CURRENT` 是自完成的
+（不修改本身在决策那一刻就已完成），插件在 `decide` 里直接标为 `RESOLVED`，`complete` 对它幂等。
 
 拒绝条件（返回 `STATUS = NOT_APPLICABLE`、`execution_required = false`、不执行任何修改）：
 
-- 该编号在本会话从未被发布过；
+- 该编号在本会话从未被 `register` 过；
 - 该编号已 `RESOLVED`，且未被用新文本重新发布。
 
-隐式登记（带全上下文但未 register）**只在会话账本为空时生效**；会话已有编号后，新编号必须显式
-`register`，否则"自造编号 + 完整上下文"会绕过守卫。
+**没有任何隐式登记**：未先 `register` 的编号一律被拒，不存在"自带原文即可自动补登记"的后门。
+
+四种 STATUS 语义互不混用：`REGISTERED`＝账本写入成功（含 `complete`），`READY_TO_EXECUTE`＝决策完成待执行，
+`INSUFFICIENT_CONTEXT`＝信息不足（保持 PENDING），`NOT_APPLICABLE`＝守卫拒绝（非法调用，不得重试）。
 
 账本以 `exec.agent.id`（会话 ID）为键，会话之间互不可见；宿主行卸载时清空（fiber 作用域 effect）。
 
@@ -115,7 +124,7 @@ dsh plugin --profile <profile> add <本仓库路径>
 ## 验证
 
 ```powershell
-npm test        # 59 个用例，含 10 个强制场景与守卫用例（不需要 DSH）
+npm test        # 69 个用例，含 10 个强制场景与守卫用例（需要 DSH）
 npm run verify  # 真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要已安装 DSH）
 npm run check   # 语法 + 测试 + 装配（需要 DSH）
 ```
@@ -125,7 +134,7 @@ npm run check   # 语法 + 测试 + 装配（需要 DSH）
 | 命令 | 覆盖 | 是否需要 DSH |
 | --- | --- | --- |
 | `npm run test:offline` | 50 个用例：`decide.test.mjs`、`ledger.test.mjs`、`mandatory-scenarios.test.mjs` | **不需要**，任何机器都能跑 |
-| `npm test` | 62 个用例：上面三个 + `ledger-guard.test.mjs` | 需要（该文件驱动**真实注册的工具**，会 import `@deepseek-ai/dsh-tools`） |
+| `npm test` | 69 个用例：上面三个 + `ledger-guard.test.mjs`（含状态机与守卫用例） | 需要（该文件驱动**真实注册的工具**，会 import `@deepseek-ai/dsh-tools`） |
 | `npm run verify` | 真实 Cordis 上下文 + 真实 `defineTool` 的装配验证 | 需要 |
 
 `lib/decide.js`、`lib/rules.js`、`lib/ledger.js` 不 import 任何外部包，因此纯逻辑与账本单测可以完全离线运行。
@@ -178,7 +187,7 @@ dsh plugin --profile <profile> add <解压目录>
 验证安装：
 
 1. **离线自检**（不需 DSH，任何位置都能跑）：`npm run test:offline` → **50/50 通过**。
-2. **装进 profile 后**（此时宿主 peer 可解析）：`npm test` → **62/62** 通过、`npm run verify` → **13/13** 通过。
+2. **装进 profile 后**（此时宿主 peer 可解析）：`npm test` → **69/69** 通过、`npm run verify` → **16/16** 通过。
    注意：在**未安装到 profile 的独立副本目录**里跑 `npm test` 会因 `@deepseek-ai/dsh-scope` 等
    宿主 peer 无法解析而失败，这是依赖模型的预期结果，不是缺陷——那些 peer 按设计不随包携带。
 3. `dsh --profile <profile> --dump-config` 退出码为 0 且输出包含 `id: confirmation-resolution`

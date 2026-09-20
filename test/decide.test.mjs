@@ -27,6 +27,8 @@ function baseCall(overrides = {}) {
     original_confirmation: '主按钮是否需要更突出？',
     user_reply: 'C1 修改：把主按钮放大',
     relevant_context: '首页只有一个主操作入口',
+    // 03 §9: the caller identifies the goal; a MODIFY without one is refused.
+    user_goal: '提高关键操作的可发现性',
     do_not_change: '页面整体布局、导航结构、其他组件',
     quality_dimensions: { layout: 'SAME', clarity: 'IMPROVED', hierarchy: 'IMPROVED' },
     candidate_solutions: [
@@ -53,7 +55,8 @@ test('Test 5 — 修改不损害质量 → ACTION = MODIFY', () => {
   assert.equal(value.status, 'READY_TO_EXECUTE')
   assert.equal(value.quality_impact, 'NONE')
   assert.equal(value.execution_required, true)
-  assert.equal(value.confirmation_state, 'RESOLVED')
+  // A MODIFY is decided, not executed: it stays PENDING until `complete`.
+  assert.equal(value.confirmation_state, 'PENDING')
   assert.match(value.selected_solution, /主按钮/)
 })
 
@@ -98,6 +101,7 @@ test('Test 7 — 修改损害质量且保持现状影响使用 → MODIFY，且�
     original_confirmation: '主按钮是否需要更突出？',
     user_reply: 'C1 修改：把主按钮放大 300%',
     relevant_context: '首页唯一主操作入口，用户报告找不到入口',
+    user_goal: '提高关键操作的可发现性',
     do_not_change: '页面整体布局、导航结构',
     quality_impact: 'MEDIUM',
     user_impact_if_unchanged: 'MEDIUM',
@@ -140,6 +144,7 @@ test('Test 7b — 用户方案本身就是质量损失最小的方案时，仍�
     current_state: '按钮尺寸偏小',
     original_confirmation: '主按钮是否需要更突出？',
     user_reply: 'C1 修改：把主按钮放大一档',
+    user_goal: '让主按钮更容易被发现',
     quality_impact: 'LOW',
     user_impact_if_unchanged: 'MEDIUM',
     user_proposed_solution: '把主按钮放大一档',
@@ -190,6 +195,7 @@ test('Test 7c — MODIFY 必需但只有用户原始方案且它被淘汰 → IN
     current_state: '主按钮与正文同尺寸',
     original_confirmation: '主按钮是否需要更突出？',
     user_reply: 'C1 修改：把主按钮放大 300%',
+    user_goal: '提高关键操作的可发现性',
     quality_impact: 'MEDIUM',
     user_impact_if_unchanged: 'HIGH',
     user_proposed_solution: '把主按钮放大 300%',
@@ -230,6 +236,7 @@ test('Test 7f — 全部候选方案触发硬性淘汰 → INSUFFICIENT_CONTEXT'
     current_state: '受限布局',
     original_confirmation: '是否重做整个页面？',
     user_reply: 'C1 修改：重做整页',
+    user_goal: '让入口更明显',
     quality_impact: 'MEDIUM',
     user_impact_if_unchanged: 'MEDIUM',
     candidate_solutions: [
@@ -293,7 +300,8 @@ test('Test 1/2/10 — 插件触发条件与禁止场景已写入 System Prompt �
 test('Test 3/8/9 — 编号稳定性、状态管理、混合消息拆分已写入 System Prompt 文本', () => {
   for (const fragment of [
     'C1 = PENDING，C2 = PENDING，C3 = PENDING',
-    'C1 = RESOLVED，C2 = RESOLVED，C3 = PENDING',
+    'C1 = RESOLVED（C1 是 MODIFY，需先执行成功再 complete），C2 = RESOLVED（KEEP_CURRENT 在决策时即完成）',
+    '状态变更只能通过插件',
     '不得擅自替用户处理用户没有回复的确认项',
     '确认项不得因为下一轮对话而重新编号',
     '混合消息的处理',
@@ -359,7 +367,7 @@ test('输入结构接受 02 §2 的全部字段', () => {
 test('每次调用只处理一个确认事项 — 其它确认项状态不被本工具改写', () => {
   const value = decide(baseCall({ confirmation_id: 'C1', quality_impact: 'NONE' }))
   assert.equal(value.confirmation_id, 'C1')
-  assert.equal(value.confirmation_state, 'RESOLVED')
+  assert.equal(value.confirmation_state, 'PENDING')
   assert.ok(!JSON.stringify(value).includes('C2'))
 })
 

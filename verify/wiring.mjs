@@ -147,15 +147,15 @@ check('parameter schema exposes the optional context fields', () => {
   for (const field of ['user_goal', 'relevant_context', 'available_constraints', 'quality_impact', 'candidate_solutions', 'action']) {
     assert.ok(schema.properties[field] !== undefined, `missing parameter ${field}`)
   }
-  assert.deepEqual(schema.properties.action.enum, ['resolve', 'register'])
+  assert.deepEqual(schema.properties.action.enum, ['register', 'decide', 'complete'])
 })
-check('output schema declares the guard status and state, not just the two decisions', () => {
+check('output schema declares all four statuses and the three ledger states', () => {
   const schema = tools[0].output.schema
-  assert.deepEqual(schema.properties.status.enum, ['READY_TO_EXECUTE', 'INSUFFICIENT_CONTEXT', 'NOT_APPLICABLE'])
+  assert.deepEqual(schema.properties.status.enum, ['READY_TO_EXECUTE', 'INSUFFICIENT_CONTEXT', 'REGISTERED', 'NOT_APPLICABLE'])
   assert.deepEqual(schema.properties.confirmation_state.enum, ['PENDING', 'RESOLVED', 'UNCHANGED'])
 })
 
-// ── 4. execute + render ────────────────────────────────────────────────────
+// ── 4. execute + render, through the register → decide → complete flow ──────
 const tool = tools[0]
 // `exec.agent.id` is the live SessionId; the ledger guard keys on it.
 const exec = { agent: { id: 'wiring-session' } }
@@ -164,37 +164,57 @@ const call = {
   current_state: '主按钮为次级尺寸',
   original_confirmation: '主按钮是否需要更突出？',
   user_reply: 'C1 修改',
+  user_goal: '提高关键操作的可发现性',
   quality_impact: 'NONE',
   candidate_solutions: [{ label: 'promote', approach: '提高一个视觉层级', scope: 'component' }],
 }
-const decision = await tool.execute(call, exec)
-check('execute() returns a spec-shaped MODIFY decision', () => {
+const registered = await tool.execute({ ...call, action: 'register' }, exec)
+check('register reports REGISTERED and PENDING (a write, not a refusal)', () => {
+  assert.equal(registered.status, 'REGISTERED')
+  assert.equal(registered.confirmation_state, 'PENDING')
+  assert.equal(registered.execution_required, false)
+})
+const decision = await tool.execute({ ...call, action: 'decide' }, exec)
+check('decide() returns a spec-shaped MODIFY decision that stays PENDING', () => {
   assert.equal(decision.action, 'MODIFY')
   assert.equal(decision.status, 'READY_TO_EXECUTE')
-  assert.equal(decision.confirmation_state, 'RESOLVED')
+  assert.equal(decision.confirmation_state, 'PENDING')
   assert.equal(decision.confirmation_id, 'C1')
+  assert.equal(decision.execution_required, true)
 })
 check('render() emits the canonical uppercase block', () => {
   const blocks = tool.output.render({}, decision)
   assert.equal(blocks.length, 1)
   assert.equal(blocks[0].type, 'text')
-  for (const label of ['CONFIRMATION_ID: C1', 'ACTION: MODIFY', 'STATUS: READY_TO_EXECUTE', 'CONFIRMATION_STATE_AFTER: RESOLVED']) {
+  for (const label of ['CONFIRMATION_ID: C1', 'ACTION: MODIFY', 'STATUS: READY_TO_EXECUTE', 'CONFIRMATION_STATE_AFTER: PENDING']) {
     assert.ok(blocks[0].text.includes(label), `missing ${label}`)
   }
 })
+const completed = await tool.execute({ ...call, action: 'complete' }, exec)
+check('complete resolves the item only after execution', () => {
+  assert.equal(completed.status, 'REGISTERED')
+  assert.equal(completed.confirmation_state, 'RESOLVED')
+})
 
 // ── 5. the code-level guard, through the real tool ─────────────────────────
-check('the guard refuses an already-resolved item inside the real tool', async () => {
-  const again = await tool.execute(call, exec)
+check('the guard refuses a decided-and-completed item', async () => {
+  const again = await tool.execute({ ...call, action: 'decide' }, exec)
   assert.equal(again.status, 'NOT_APPLICABLE')
   assert.equal(again.execution_required, false)
   assert.match(again.selection_reason, /ITEM_ALREADY_RESOLVED/)
 })
-check('register records without deciding', async () => {
-  const registered = await tool.execute({ ...call, confirmation_id: 'C2', action: 'register' }, exec)
-  assert.equal(registered.confirmation_state, 'PENDING')
-  assert.equal(registered.execution_required, false)
-  assert.match(registered.notes, /C2=PENDING/)
+check('there is no implicit registration: an unregistered id is refused', async () => {
+  const refused = await tool.execute({ ...call, confirmation_id: 'C7', action: 'decide' }, { agent: { id: 'wiring-other' } })
+  assert.equal(refused.status, 'NOT_APPLICABLE')
+  assert.match(refused.selection_reason, /UNKNOWN_CONFIRMATION_ITEM/)
+})
+check('a MODIFY without user_goal is refused with the stable reason code', async () => {
+  const noGoal = { ...call, confirmation_id: 'C3' }
+  delete noGoal.user_goal
+  await tool.execute({ ...noGoal, action: 'register' }, exec)
+  const refused = await tool.execute({ ...noGoal, action: 'decide' }, exec)
+  assert.equal(refused.status, 'INSUFFICIENT_CONTEXT')
+  assert.match(refused.missing_information, /USER_GOAL_REQUIRED_FOR_MODIFY/)
 })
 check('ledgers are session-keyed and resettable', () => {
   assert.equal(typeof plugin.ledgers, 'object')

@@ -25,6 +25,8 @@ const C1 = {
   original_confirmation: '主按钮是否需要更突出？',
   user_reply: 'C1 修改：把主按钮放大',
   relevant_context: '首页唯一主操作入口',
+  // 03 §9: the caller identifies the goal; a MODIFY without one is refused.
+  user_goal: '提高关键操作的可发现性',
   quality_impact: 'NONE',
   candidate_solutions: [
     { label: 'promote', approach: '把主按钮提高一个视觉层级', scope: 'component', quality_loss: 'NONE' },
@@ -71,11 +73,13 @@ test('Test 3 — 用户只回复 C1 修改 → 仅 C1 决策并 RESOLVED', () =>
   assert.equal(value.confirmation_id, 'C1')
   assert.equal(value.status, 'READY_TO_EXECUTE')
   assert.equal(value.action, 'MODIFY')
-  assert.equal(value.confirmation_state, 'RESOLVED')
+  // A MODIFY decision is not the execution: the ledger keeps it PENDING until
+  // DSH reports success through `complete` (see ledger-guard.test.mjs ①).
+  assert.equal(value.confirmation_state, 'PENDING')
   assert.equal(value.execution_required, true)
 })
 
-test('Test 4 — C1 修改，C2 保持 → C1 决策；C2 KEEP 且 RESOLVED', () => {
+test('Test 4 — C1 修改，C2 保持 → C1 决策（PENDING，待执行）；C2 KEEP 且 RESOLVED', () => {
   const c1 = decide(C1)
   const c2 = decide({
     confirmation_id: 'C2',
@@ -87,7 +91,7 @@ test('Test 4 — C1 修改，C2 保持 → C1 决策；C2 KEEP 且 RESOLVED', ()
     user_impact_if_unchanged: 'NONE',
   })
   assert.equal(c1.action, 'MODIFY')
-  assert.equal(c1.confirmation_state, 'RESOLVED')
+  assert.equal(c1.confirmation_state, 'PENDING')
   assert.equal(c2.action, 'KEEP_CURRENT')
   assert.equal(c2.selected_solution, 'KEEP_CURRENT')
   assert.equal(c2.execution_required, false)
@@ -123,6 +127,7 @@ test('Test 7 — 修改降低质量且保持现状影响使用 → MODIFY，且�
     original_confirmation: '主按钮是否需要更突出？',
     user_reply: 'C1 修改：把主按钮放大 300%',
     relevant_context: '首页唯一主操作入口',
+    user_goal: '提高关键操作的可发现性',
     quality_impact: 'MEDIUM',
     user_impact_if_unchanged: 'MEDIUM',
     user_proposed_solution: '把主按钮放大 300%',
@@ -152,16 +157,19 @@ test('Test 7 — 修改降低质量且保持现状影响使用 → MODIFY，且�
   assert.equal(value.status, 'READY_TO_EXECUTE')
 })
 
-test('Test 9 — 用户只回复 C1 → C1 RESOLVED，C2/C3 保持 PENDING', () => {
+test('Test 9 — 用户只回复 C1 → C1 待执行（PENDING），C2/C3 保持 PENDING', () => {
   const c1 = decide(C1)
-  assert.equal(c1.confirmation_state, 'RESOLVED')
+  // C1 is a MODIFY: its decision leaves it PENDING until the execution succeeds
+  // and `complete` is called. It is NOT closed by the decision alone.
+  assert.equal(c1.confirmation_state, 'PENDING')
   // The tool only ever speaks about the item it was called for, so C2/C3 cannot
   // be resolved or renumbered by it.
   const serialized = JSON.stringify(c1)
   assert.ok(!serialized.includes('C2'))
   assert.ok(!serialized.includes('C3'))
-  assert.match(RULES, /C1 = RESOLVED，C2 = RESOLVED，C3 = PENDING/)
+  assert.match(RULES, /C1 = RESOLVED（C1 是 MODIFY，需先执行成功再 complete）/)
   assert.match(RULES, /不得擅自替用户处理用户没有回复的确认项/)
+  assert.match(RULES, /状态变更只能通过插件/)
 })
 
 test('全部 10 个场景的规则文本都存在于实际注册的 System Prompt 段落中', () => {

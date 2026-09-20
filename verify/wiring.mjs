@@ -195,6 +195,11 @@ await check('complete cannot skip decide (no MODIFY decision outstanding yet)', 
   assert.equal(skipped.status, 'NOT_APPLICABLE')
   assert.match(skipped.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
 })
+await check('re-registering an id that is still open is refused', async () => {
+  const refused = await tool.execute({ ...call, action: 'register' }, exec)
+  assert.equal(refused.status, 'NOT_APPLICABLE')
+  assert.match(refused.selection_reason, /CONFIRMATION_ID_STILL_OPEN/)
+})
 await check('decide without user_reply is refused, naming the real cause', async () => {
   const noReply = { ...call, action: 'decide' }
   delete noReply.user_reply

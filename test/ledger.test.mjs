@@ -96,15 +96,43 @@ test('ledger — 会话之间完全隔离，clear 清空全部', () => {
   assert.equal(ledgers.for('ledger-a').size(), 0)
 })
 
-test('ledger — 同一编号重新发布新文本后，旧文本的记录被替换', () => {
+test('ledger — 同一编号跨轮复用：新文本替换旧文本，但裁决被清空', () => {
   const ledger = new ConfirmationLedger()
   ledger.register('C1', { originalConfirmation: '旧', currentState: '旧状态', userGoal: '旧目标' })
+  ledger.markDecided('C1', 'MODIFY')
+  ledger.resolve('C1')
   ledger.register('C1', { originalConfirmation: '新', currentState: '新状态', userGoal: '新目标' })
   const item = ledger.get('C1')
   assert.equal(item.originalConfirmation, '新')
   assert.equal(item.currentState, '新状态')
   assert.equal(item.userGoal, '新目标')
   assert.equal(item.state, ITEM_STATE.PENDING)
+  assert.equal(item.decisionAction, undefined)
+  assert.equal(ledger.decisionOf('C1').round, 2)
+})
+
+test('ledger — 编号仍在使用时 register 直接抛错（即使绕过 index.js 也覆盖不了）', () => {
+  // PENDING
+  const pending = new ConfirmationLedger()
+  pending.register('C1', { originalConfirmation: '原文' })
+  assert.throws(() => pending.register('C1', { originalConfirmation: '新文' }), /still open \(PENDING\)/)
+  assert.equal(pending.get('C1').originalConfirmation, '原文')
+
+  // AWAITING_EXECUTION
+  const awaiting = new ConfirmationLedger()
+  awaiting.register('C1', { originalConfirmation: '原文' })
+  awaiting.markDecided('C1', 'MODIFY')
+  assert.throws(() => awaiting.register('C1', { originalConfirmation: '新文' }), /still open \(AWAITING_EXECUTION\)/)
+  assert.equal(awaiting.get('C1').originalConfirmation, '原文')
+  assert.equal(awaiting.get('C1').state, ITEM_STATE.AWAITING_EXECUTION)
+})
+
+test('ledger — register 会规范化 id（首尾空白视同同一编号）', () => {
+  const ledger = new ConfirmationLedger()
+  ledger.register('  C1  ', { originalConfirmation: 'x' })
+  assert.equal(ledger.get('C1') !== undefined, true)
+  assert.equal(ledger.snapshot()[0].id, 'C1')
+  assert.throws(() => ledger.register('   ', { originalConfirmation: 'x' }), /confirmation_id is empty/)
 })
 
 test('ledger — 未登记的编号不能直接 resolve（内部一致性）', () => {

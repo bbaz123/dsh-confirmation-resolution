@@ -92,6 +92,11 @@ test('e2e — 完整生命周期：登记 → 决策 → 执行失败可重试 �
   assert.equal(skip.status, 'NOT_APPLICABLE')
   assert.match(skip.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
 
+  // ── 守卫：编号仍在使用时不得被下一次 register 覆盖 ───────────────────────
+  const whilePending = await session.register({ ...c1(task1C1) })
+  assert.equal(whilePending.status, 'NOT_APPLICABLE')
+  assert.match(whilePending.selection_reason, /CONFIRMATION_ID_STILL_OPEN/)
+
   // ── 用户回复，逐项决策 ───────────────────────────────────────────────────
   const decisionC1 = await session.decide(c1(task1C1))
   assert.equal(decisionC1.action, 'MODIFY')
@@ -99,6 +104,11 @@ test('e2e — 完整生命周期：登记 → 决策 → 执行失败可重试 �
   assert.equal(decisionC1.confirmation_state, 'AWAITING_EXECUTION')
   assert.equal(decisionC1.execution_required, true)
   assert.match(decisionC1.selected_solution, /主按钮/)
+
+  // ── 守卫：等待执行期间同样不能被覆盖，新文本也不行 ───────────────────────
+  const whileAwaiting = await session.register({ ...c1('趁执行期间换个新文本？') })
+  assert.equal(whileAwaiting.status, 'NOT_APPLICABLE')
+  assert.match(whileAwaiting.selection_reason, /CONFIRMATION_ID_STILL_OPEN/)
 
   const decisionC2 = await session.decide(c2(task1C2))
   assert.equal(decisionC2.action, 'KEEP_CURRENT')

@@ -46,8 +46,12 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
   若退回"决策即关闭"，执行失败会把项目永久关死；若允许 `register → complete` 直连，
   就等于把"必须经过 decide"降级成 Prompt 要求——**`complete` 必须只在 `AWAITING_EXECUTION` 时被接受**。
 - **不得引入隐式登记**：未 `register` 的编号必须被拒绝；任何"自带原文即自动补登记"的后门都会削弱守卫。
-- **C 编号跨轮复用**：用新文本 `register` 已 `RESOLVED` 的编号 → 开启新一轮（清空上一轮裁决，轮次 +1）；
-  同文本重复 `register` → 拒绝。新一轮必须重新 `decide`，上一轮裁决不得授权新一轮的 `complete`。
+- **C 编号跨轮复用**：只有**真正结束（RESOLVED）**的编号才能被复用，而且必须带**新文本**：
+  新文本 → 开启新一轮（清空上一轮裁决，轮次 +1）；同文本 → 拒绝（`ITEM_ALREADY_RESOLVED`）。
+  **正在使用中的编号（`PENDING` / `AWAITING_EXECUTION`）一律拒绝重新 register**
+  （`CONFIRMATION_ID_STILL_OPEN`），否则会覆盖活跃项及其未完成的裁决。
+  `ledger.register()` 自身也对该情况抛错，作为绕过 `index.js` 时的第二层防御。
+  新一轮必须重新 `decide`，上一轮裁决不得授权新一轮的 `complete`。
 - 四种 STATUS 语义不得混用：`REGISTERED`（账本写入成功）/ `READY_TO_EXECUTE`（待执行）/
   `INSUFFICIENT_CONTEXT`（保持 PENDING）/ `NOT_APPLICABLE`（守卫拒绝）。
 - **`user_reply` 是按 action 条件必填**（schema 无法表达，故在 `execute()` 里按 action 校验）：
@@ -69,8 +73,8 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
   曾因漏做这一步，导致按副本评审时看到的仍是旧代码（旧 `execute`、旧 `addressRootCause`、
   无 `ledger.js`），并因此产生了一整轮无效返工。
 - 测试分三层，**不要混淆**（数字以 `Select-String -Pattern '^test\('` 实测为准）：
-  `npm run test:offline`（54 用例：纯逻辑 + 账本，不需要 DSH）、
-  `npm test`（85 用例：全部，需要 DSH）、`npm run verify`（21 项装配检查，需要 DSH）。
+  `npm run test:offline`（56 用例：纯逻辑 + 账本，不需要 DSH）、
+  `npm test`（88 用例：全部，需要 DSH）、`npm run verify`（22 项装配检查，需要 DSH）。
   凡 import 到 `lib/index.js` 的用例都会拉入宿主 `@deepseek-ai/dsh-tools`，因此**不能**放进离线子集
   （`e2e-lifecycle.test.mjs` 与 `ledger-guard.test.mjs` 都属于这一类；曾误把 e2e 当离线用例，
   在分发副本里实测失败才发现）。
@@ -79,9 +83,9 @@ System Prompt 规则 + 宿主平面 Cordis 插件：
 ## 构建 / 测试 / 检查命令
 
 ```powershell
-npm run test:offline  # 54 个用例：纯决策算法 + 账本，任何环境（不需要 DSH）
-npm test              # 85 个用例：全部（含端到端生命周期与真实工具守卫用例，需要 DSH）
-npm run verify        # 21 项：真实 Cordis 上下文的装配验证（需要 DSH）
+npm run test:offline  # 56 个用例：纯决策算法 + 账本，任何环境（不需要 DSH）
+npm test              # 88 个用例：全部（含端到端生命周期与真实工具守卫用例，需要 DSH）
+npm run verify        # 22 项：真实 Cordis 上下文的装配验证（需要 DSH）
 npm run check         # 语法检查 + 全部测试 + 装配验证（需要 DSH）
 ```
 

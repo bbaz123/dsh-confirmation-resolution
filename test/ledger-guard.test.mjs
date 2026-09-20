@@ -211,13 +211,31 @@ test('③ register 返回 REGISTERED（成功写入），而不是 NOT_APPLICABL
   assert.match(registered.notes, /C1=PENDING/)
 })
 
-test('③ 重复 register 同一项仍然是 REGISTERED + PENDING（不是拒绝）', async () => {
+test('③ 编号仍在使用时重复 register 被拒绝（不是成功登记）', async () => {
   const tool = makeTool()
   const exec = execFor('status-2')
   await register(tool, 'C1', exec)
   const again = await register(tool, 'C1', exec)
-  assert.equal(again.status, 'REGISTERED')
-  assert.equal(again.confirmation_state, 'PENDING')
+  assert.equal(again.status, 'NOT_APPLICABLE')
+  assert.match(again.selection_reason, /CONFIRMATION_ID_STILL_OPEN/)
+  assert.equal(again.execution_required, false)
+  // The live item is untouched: its text and state are still the originals.
+  const decided = await decideItem(tool, 'C1', exec)
+  assert.equal(decided.status, 'READY_TO_EXECUTE')
+  assert.equal(decided.original_confirmation, 'C1 是否需要调整？')
+})
+
+test('③ AWAITING_EXECUTION 期间也拒绝重新 register（新文本也不例外）', async () => {
+  const tool = makeTool()
+  const exec = execFor('status-2b')
+  await register(tool, 'C1', exec)
+  await decideItem(tool, 'C1', exec)
+  const refused = await register(tool, 'C1', exec, { original_confirmation: '趁执行期间换个新文本？' })
+  assert.equal(refused.status, 'NOT_APPLICABLE')
+  assert.match(refused.selection_reason, /CONFIRMATION_ID_STILL_OPEN/)
+  // The outstanding decision survives, so the execution can still be reported.
+  const completed = await completeItem(tool, 'C1', exec)
+  assert.equal(completed.confirmation_state, 'RESOLVED')
 })
 
 test('③ NOT_APPLICABLE 只表示守卫拒绝：已 RESOLVED 项再 register 是拒绝', async () => {
@@ -382,17 +400,24 @@ test('⑥ 上一轮的 MODIFY 裁决不能授权新一轮的 complete（关键�
   const exec = execFor('round-2')
   await register(tool, 'C1', exec)
   await decideItem(tool, 'C1', exec)          // round 1 has an outstanding MODIFY
+  // The number is still in use, so it cannot be reopened yet...
+  const blocked = await register(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：换一个问题？' })
+  assert.equal(blocked.status, 'NOT_APPLICABLE')
+  assert.match(blocked.selection_reason, /CONFIRMATION_ID_STILL_OPEN/)
+
+  // ...and only after round 1 really finishes can the new round start.
+  await completeItem(tool, 'C1', exec)
   const round2 = await register(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：换一个问题？' })
   assert.equal(round2.confirmation_state, 'PENDING')
 
   // The round-1 decision must NOT let round 2 be completed without its own decide.
-  const skipped = await completeItem(tool, 'C1', exec)
+  const skipped = await completeItem(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：换一个问题？' })
   assert.equal(skipped.status, 'NOT_APPLICABLE')
   assert.match(skipped.selection_reason, /ITEM_NOT_AWAITING_EXECUTION/)
 
-  const decided = await decideItem(tool, 'C1', exec)
+  const decided = await decideItem(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：换一个问题？' })
   assert.equal(decided.confirmation_state, 'AWAITING_EXECUTION')
-  const completed = await completeItem(tool, 'C1', exec)
+  const completed = await completeItem(tool, 'C1', exec, { original_confirmation: 'C1 第二轮：换一个问题？' })
   assert.equal(completed.confirmation_state, 'RESOLVED')
 })
 

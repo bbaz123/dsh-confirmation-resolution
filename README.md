@@ -200,11 +200,19 @@ complete → DSH 实际执行成功后调用        → STATUS = REGISTERED，�
 
 ### 同一会话里编号可以跨轮复用
 
-一个长会话里完成第一个任务后开始第二个任务时，DSH 很自然又会从 C1 开始编号，**用户仍然只看到 C1**：
+一个长会话里完成第一个任务后开始第二个任务时，DSH 很自然又会从 C1 开始编号，**用户仍然只看到 C1**。
+接受与拒绝的界线是明确的：
 
-- 用**新的确认内容** `register` 该编号 → 开启新一轮，回到 `PENDING`（内部轮次 +1，上一轮的裁决被清空）；
-- 用**完全相同的内容**重复 `register` 已关闭的编号 → 被拒绝（不会复活已结束的项）；
-- 新一轮必须重新 `decide`：**上一轮的裁决不会授权新一轮的 `complete`**。
+| 该编号的当前状态 | `register` 的结果 |
+| --- | --- |
+| 不存在 | 登记成功（第 1 轮） |
+| `PENDING`（等用户回复） | **拒绝** `CONFIRMATION_ID_STILL_OPEN`——不覆盖正在处理中的项 |
+| `AWAITING_EXECUTION`（等执行） | **拒绝** `CONFIRMATION_ID_STILL_OPEN`——连新文本也不行 |
+| `RESOLVED` + **相同**文本 | **拒绝** `ITEM_ALREADY_RESOLVED`——重复登记，不复活已结束项 |
+| `RESOLVED` + **新**文本 | 开启新一轮：回到 `PENDING`，轮次 +1，上一轮裁决被清空 |
+
+新一轮必须重新 `decide`：**上一轮的裁决不会授权新一轮的 `complete`**。
+换句话说，编号只有在**真正结束之后**才能被复用。
 
 ## Architecture
 
@@ -239,9 +247,9 @@ lib/
 ## Testing
 
 ```powershell
-npm run test:offline   # 54 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
-npm test               # 85 个用例：上面 + 端到端生命周期 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
-npm run verify         # 21 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
+npm run test:offline   # 56 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
+npm test               # 88 个用例：上面 + 端到端生命周期 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
+npm run verify         # 22 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
 npm run check          # 语法 + 全部测试 + 装配验证（需要 DSH）
 ```
 
@@ -307,8 +315,8 @@ node tools/materialize-deps.mjs <bundleDir> "$env:USERPROFILE\.dsh\profiles\node
 ```
 
 因此：**在未安装到 profile 的独立副本目录里跑 `npm test` 会因宿主 peer 无法解析而失败**，
-这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 54/54 通过）；
-装进 profile 后再跑 `npm test`（应 85/85）与 `npm run verify`（应 21/21）。
+这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 56/56 通过）；
+装进 profile 后再跑 `npm test`（应 88/88）与 `npm run verify`（应 22/22）。
 
 ### 在目标机器上安装
 

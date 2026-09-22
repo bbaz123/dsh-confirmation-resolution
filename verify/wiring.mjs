@@ -5,7 +5,9 @@
  *   1. the plugin module imports through the SAME bare-specifier resolution the
  *      loader uses at boot (Node ESM resolution from the profile's install).
  *      This step needs a DSH install; the profile is located through DSH_HOME /
- *      DSH_PROFILE and is never hard-coded to one machine;
+ *      DSH_PROFILE and is never hard-coded to one machine. The install check runs
+ *      before Cordis is imported, so a bare checkout gets a clear message and
+ *      exit code 2 instead of a module-not-found;
  *   2. `apply()` registers exactly one prompt section and one tool on a real
  *      Cordis context, with the spec'd name and section metadata;
  *   3. the tool definition passes the real `defineTool` validation from
@@ -24,7 +26,6 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
 
 const results = []
 /**
@@ -66,6 +67,13 @@ if (profileRoots.length === 0) {
   )
   process.exit(2)
 }
+
+// Cordis is loaded only now, deliberately. ESM imports are hoisted, so a static
+// import at the top would abort with an opaque ERR_MODULE_NOT_FOUND on a bare
+// checkout — before the "you need a DSH install" message above could ever print.
+// Loading it after the guard keeps that diagnostic accurate, and lets CI assert
+// the exit code without installing a single dependency.
+const { Context } = await import('@deepseek-ai/cordis')
 
 let entryUrl
 const resolveFailures = []

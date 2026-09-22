@@ -1,0 +1,63 @@
+name: Bug report
+description: 报告一个缺陷（决策结果不对、守卫误判、装配/安装失败等）
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先跑一次 `npm run test:offline`，它的输出能快速区分
+        "环境问题"和"代码问题"。
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js 版本
+      description: 运行 `node --version`。本项目要求 >= 22.19.0。
+      placeholder: v24.19.0
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本 / 安装方式
+      description: 若涉及装配、`--dump-config` 或工具调用，请给出 DSH 版本；纯离线问题可写 "N/A"。
+      placeholder: N/A
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象与期望
+      description: 实际发生了什么？你期望发生什么？
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: |
+        越具体越好。若涉及工具调用，请给出 `confirmation_id`、`action`（register/decide/complete）、
+        关键入参，以及返回的 `STATUS` 与 `confirmation_state`。
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: offline-output
+    attributes:
+      label: npm run test:offline 输出
+      description: 请粘贴实际输出（应 58/58；若失败请贴失败项）。
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: 受影响的是哪一层
+      options:
+        - 决策算法（lib/decide.js）
+        - 会话账本 / 守卫（lib/ledger.js、lib/index.js）
+        - System Prompt 规则文本（lib/rules.js）
+        - 装配 / 安装 / 卸载
+        - 文档
+    validations:
+      required: true

@@ -1,5 +1,10 @@
 # dsh-confirmation-resolution
 
+[![offline verification](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml/badge.svg)](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A522.19.0-brightgreen.svg)](https://nodejs.org)
+[![offline tests](https://img.shields.io/badge/offline%20tests-58%20passing-brightgreen.svg)](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml)
+
 **让 DSH 在任务完成后的"待确认事项"阶段，既不机械照做，也不反复询问。**
 
 `dsh-confirmation-resolution` 是一个用于 DeepSeek Harness（DSH）的待确认事项决策插件。
@@ -25,6 +30,18 @@
 | 质量不受损 | `MODIFY` |
 | 质量会下降，但保持现状不影响实际使用 | `KEEP_CURRENT` |
 | 质量会下降，而且保持现状会影响实际使用 | `MODIFY` → 选择用户收益更高、质量损失更小、副作用更少的方案 |
+
+## 核心特性
+
+- **固定决策顺序，不是模型即兴判断**：`质量影响` → `保持现状是否影响实际使用` → `用户真实目标` → `最优可行方案`。
+- **用户提出的做法只是一个候选方案**。它必须通过同一组硬性淘汰条件，不会因为用户说了就照做。
+- **代码级硬守卫 + 会话账本**：未登记的 `C` 编号、已关闭的确认项会被拒绝（`NOT_APPLICABLE`），
+  而不是被静默当成一次决策。硬守卫不依赖模型是否遵守 Prompt。
+- **三态状态机**：`register → decide → complete`。`MODIFY` 决策后必须真的执行成功才变 `RESOLVED`，
+  执行失败可重试，不会把确认项永久关死。
+- **纯函数决策核心**：`lib/decide.js` 无 I/O、无服务访问、无定时器，可完全离线单测。
+- **零构建、零配置、零运行时依赖**：纯 ESM，无编译步骤；只依赖宿主 DSH 提供的
+  `tools` 与 `systemPrompt` 两个服务；安装后规则自动进入每个会话的 System Prompt。
 
 ## 为什么需要它？
 
@@ -287,6 +304,34 @@ dsh plugin --profile web remove dsh-plugin-confirmation-resolution
 行随 bundle 层一起消失，System Prompt 段落与工具同时下线（两者都是 fiber 作用域的可逆 effect）。
 卸载后 DSH 恢复原行为：不再有确认项决策流程，也不再有这几条 System Prompt 规则。
 
+## Roadmap
+
+- **可配置的决策边界**：把"什么算影响实际使用"的判断维度暴露成配置，而不是只有一套固定口径。
+- **账本可选持久化**：目前账本按会话隔离且**不持久化**（DSH 重启即空）。是否需要跨重启保留，
+  属于契约变更，需先讨论（见 `AGENTS.md`）。
+- **决策轨迹可观测**：把每次 `decide` 的输入维度与淘汰理由输出成结构化日志，便于事后复盘。
+- **跟随宿主演进**：持续跟踪 DSH 宿主内部模块的版本变化，验证装配兼容性。
+
+> Roadmap 是方向而不是承诺。想推进其中某项，欢迎先开 issue 讨论范围与契约影响。
+
+## Contributing
+
+欢迎贡献。请先读 [`CONTRIBUTING.md`](./CONTRIBUTING.md)（怎么改、怎么验）与
+[`AGENTS.md`](./AGENTS.md)（项目结构、职责边界与硬性约定）。
+
+最快的自检（**不需要安装 DSH**）：
+
+```powershell
+npm run test:offline   # 应 58/58
+```
+
+CI 在 Node 22 与 24 上跑这层离线套件，并额外断言"没有 DSH 时 `verify` 必须以退出码 2 报错"——
+防止验证套件在根本跑不起来时静默通过。
+
+## License
+
+[Apache License 2.0](./LICENSE) © 2026 bbaz123
+
 ---
 
 <details>
@@ -305,7 +350,7 @@ dsh plugin --profile web remove dsh-plugin-confirmation-resolution
 ### 依赖模型
 
 - **随包携带**：`lib/`、`test/`、`verify/`、`tools/`、`cordis.patch.yml`、`package.json`、`README.md`、
-  `AGENTS.md`、三份规范 `.docx`，以及 `node_modules` 中的直接依赖闭包 —— `@deepseek-ai/dsh-tools`、
+  `AGENTS.md`、`LICENSE`、`CONTRIBUTING.md`、三份规范 `.docx`，以及 `node_modules` 中的直接依赖闭包 —— `@deepseek-ai/dsh-tools`、
   `@deepseek-ai/schemastery`、`@deepseek-ai/cordis` 及三者的运行期依赖
   （`@deepseek-ai/cosmokit`、`@deepseek-ai/dsh-brand`、`@deepseek-ai/dsh-util-values`、
   `@standard-schema/spec`，共 7 个包）。依赖是**真实目录副本**而非目录链接，移动或解压后仍可用。
@@ -341,12 +386,13 @@ foreach ($d in 'lib','test','verify','tools') {
   Copy-Item (Join-Path $src $d) $pack -Recurse -Force
 }
 foreach ($f in 'README.md','AGENTS.md','package.json','cordis.patch.yml','.gitignore',
+               'LICENSE','CONTRIBUTING.md',
                '01_DSH_System_Prompt_待确认事项触发规则.docx',
                '02_Confirmation_Resolution_Plugin_执行规则.docx',
                '03_DSH_待确认事项决策规范_维护与测试基准.docx') {
   Copy-Item (Join-Path $src $f) $pack -Force
 }
-# 副本内把 package.json 的 test 指向 test:offline（副本目录里宿主 peer 不可解析）
+# 副本目录里宿主 peer 不可解析，因此跑离线层（不要跑 npm test）
 cd $pack; npm run test:offline
 ```
 

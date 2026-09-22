@@ -16,9 +16,31 @@
     "lib/",
     "cordis.patch.yml",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "LICENSE"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "author": "bbaz123",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bbaz123/dsh-confirmation-resolution.git"
+  },
+  "homepage": "https://github.com/bbaz123/dsh-confirmation-resolution#readme",
+  "bugs": {
+    "url": "https://github.com/bbaz123/dsh-confirmation-resolution/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "cordis-plugin",
+    "dsh-plugin",
+    "confirmation",
+    "system-prompt",
+    "ai-agent",
+    "llm-tools",
+    "agent-plugin"
+  ],
   "engines": {
     "node": ">=22.19.0"
   },

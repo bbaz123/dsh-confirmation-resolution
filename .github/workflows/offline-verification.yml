@@ -1,0 +1,53 @@
+name: offline verification
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: offline suite (node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # No `npm install` step is intentional: the offline suite covers the pure
+      # modules (decide.js / ledger.js / rules.js), which import nothing at all.
+      # A bare checkout is therefore enough, and CI stays independent of the
+      # registry and of the DSH host internals.
+      - name: Syntax check
+        run: |
+          node --check lib/index.js
+          node --check lib/decide.js
+          node --check lib/ledger.js
+          node --check lib/rules.js
+
+      - name: Offline suite (58 tests)
+        run: npm run test:offline
+
+      # The wiring check needs a real DSH install. Without one it must exit 2 and
+      # say so — a verification suite that silently passes when it could not run
+      # is worse than no verification suite. This step pins that contract.
+      - name: verify must fail loudly without a DSH install (never a false pass)
+        run: |
+          code=0
+          node verify/wiring.mjs || code=$?
+          echo "verify exit code without DSH: $code"
+          if [ "$code" -ne 2 ]; then
+            echo "::error::expected exit code 2 without a DSH install, got $code"
+            exit 1
+          fi

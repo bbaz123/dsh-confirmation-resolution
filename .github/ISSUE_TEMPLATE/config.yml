@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安装 / 验证问题先看 README
+    url: https://github.com/bbaz123/dsh-confirmation-resolution#quick-start
+    about: Quick start、Testing 与 Compatibility 小节覆盖了绝大多数安装与验证问题。
+  - name: 它"不会做什么"
+    url: https://github.com/bbaz123/dsh-confirmation-resolution#插件不会直接修改你的项目
+    about: 本插件是方案评审器，不直接修改你的项目，也不自动执行任何东西。

@@ -7,7 +7,7 @@
 
 **让 DSH 在任务完成后的"待确认事项"阶段，既不机械照做，也不反复询问。**
 
-`dsh-confirmation-resolution` 是一个用于 DeepSeek Harness（DSH）的待确认事项决策插件。
+（安装前警告：插件构建按照npm 全局安装版 0.1.5-rc.1 + web profile版本构建，涉及dsh源码修改，更新dsh可能导致插件不兼容，请注意！！！）`dsh-confirmation-resolution` 是一个用于 DeepSeek Harness（DSH）的待确认事项决策插件。
 
 当 DSH 完成主任务、留下 `C1` / `C2` / `C3` … 等待确认事项之后，用户的回复不会被简单理解为"照原话修改"。
 

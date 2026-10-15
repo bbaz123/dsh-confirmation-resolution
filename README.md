@@ -7,10 +7,14 @@
 
 **让 DSH 在任务完成后的"待确认事项"阶段，既不机械照做，也不反复询问。**
 
-> ⚠️ **安装前警告**（与上游 `master` 保持一致）
-> 插件构建按照 npm 全局安装版 **0.1.5-rc.1** + web profile 版本构建，涉及 DSH 源码修改；
+> ⚠️ **安装前警告**
+> 本插件按 npm 全局安装版 **DSH `0.2.0-rc.2`** + web profile 构建，涉及 DSH 源码修改；
 > **更新 DSH 可能导致插件不兼容**，请注意。升级 DSH 后请重跑 `npm run check` 与
 > `dsh --profile web --dump-config`，详见下文「兼容与风险说明」。
+
+**当前支持并验证的宿主：DSH `0.2.0-rc.2`**（`@deepseek-ai/dsh`；profile 内 `dsh-tools` /
+`dsh-brand` / `dsh-util-values` 同为 `0.2.0-rc.2`，peer 声明为 `^0.2.0-rc.2`）。
+V1 契约保持不变，V2 是默认关闭的版本化入口。
 
 `dsh-confirmation-resolution` 是一个用于 DeepSeek Harness（DSH）的待确认事项决策插件。
 
@@ -251,8 +255,9 @@ decide(C1)    → 账本校验 → 固定决策
 - V2 增加了调用方需要准备的输入（`context`、`authorization`、带证据的 `candidates`），
   载荷比 V1 大。这正是「不确定不等于安全」的代价，也是它默认关闭的原因之一：先在小范围会话验证，
   再决定是否作为默认策略。
-- 本插件按 npm 全局安装版 DSH `0.1.5-rc.1` / `0.2.0-rc.2` 与对应 web profile 构建，
-  涉及宿主内部模块（`dsh-tools` 等）。**更新 DSH 可能导致插件不兼容**，升级后请重跑 `npm run check`
+- **当前支持并验证的宿主：npm 全局安装版 DSH `0.2.0-rc.2`**，`package.json` 的 peer 声明同步为
+  `@deepseek-ai/dsh-tools: ^0.2.0-rc.2`。本插件按该版本与对应 web profile 构建，涉及宿主内部模块
+  （`dsh-tools` 等）。**更新 DSH 可能导致插件不兼容**，升级后请重跑 `npm run check`
   与 `dsh --profile web --dump-config`。
 - 回滚：把 `enableDecisionV2` 去掉或设为 `false` 即回到纯 V1；已产生的 V2 会话账本随进程重启清空，
   不会与 V1 的执行授权混用。
@@ -422,8 +427,12 @@ npm run check          # 语法 + 全部测试 + 装配验证（需要 DSH）
 
 - Node.js ≥ 22.19.0；纯 ESM，无构建步骤。
 - Cordis 4（`@deepseek-ai/cordis`）；宿主服务 `tools`、`systemPrompt`。
-- 依赖闭包与打包时的 DSH 一致（`dsh-tools`/`dsh-brand`/`dsh-util-values` `0.1.5-rc.2`、
-  `cordis` `4.0.2`、`schemastery` `3.18.2`）。DSH 版本差异较大时按下方说明重新生成依赖闭包。
+- **支持并验证的宿主：npm 全局安装版 DSH `0.2.0-rc.2`**；`package.json` 的 peer 声明为
+  `@deepseek-ai/dsh-tools: ^0.2.0-rc.2`。
+- 分发包内携带的依赖闭包（已按当前宿主重新生成）：`dsh-tools` / `dsh-brand` / `dsh-util-values`
+  `0.2.0-rc.2`、`cordis` `4.0.4`、`schemastery` `3.18.4`、`cosmokit` `1.8.5`、
+  `@standard-schema/spec` `1.1.0`。宿主版本差异较大时，按下方说明用
+  `tools/materialize-deps.mjs` 重新生成依赖闭包。
 
 ## Uninstall
 
@@ -447,6 +456,17 @@ dsh plugin --profile web remove dsh-plugin-confirmation-resolution
 - **跟随宿主演进**：持续跟踪 DSH 宿主内部模块的版本变化，验证装配兼容性。
 
 > Roadmap 是方向而不是承诺。想推进其中某项，欢迎先开 issue 讨论范围与契约影响。
+
+## 变更记录
+
+- **1.1.0（2026-10-15）** — 引入 **V2 决策引擎**：新增 `confirmation_resolution_v2` 工具与
+  独立规则段落 `confirmation:policy.v2`（**默认关闭**，装配时设 `enableDecisionV2: true` 才注册），
+  新增 `lib/evidence.js`（三值证据）、`lib/policies.js`（6 套场景策略）、`lib/trace.js`（决策轨迹）、
+  `lib/decision-v2.js`（`decideV2()`），账本增加 `AWAITING_APPROVAL` 与 `decision_revision` 版本令牌。
+  **V1 契约未变**。peer 声明收窄为 DSH `^0.2.0-rc.2`，分发包依赖闭包同步重新生成。
+  V2 代码见提交 `5f71319`；本次版本声明与文档同步见其后续提交。
+- **1.0.x** — V1 固定决策矩阵（质量影响 → 保持现状的实际使用影响 → 用户目标 → 最优方案）、
+  会话账本硬守卫（无隐式登记、编号跨轮复用规则）、三态状态机与三层测试基线。
 
 ## Contributing
 
@@ -489,7 +509,8 @@ CI 在 Node 22 与 24 上跑这层离线套件，并额外断言"没有 DSH 时 
   （`@deepseek-ai/cosmokit`、`@deepseek-ai/dsh-brand`、`@deepseek-ai/dsh-util-values`、
   `@standard-schema/spec`，共 7 个包）。依赖是**真实目录副本**而非目录链接，移动或解压后仍可用。
 - **不随包携带**：目标 DSH 自身提供的 peer 包（`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、
-  `dsh-invariants`、`dsh-system-prompt`、`cordis-plugin-loader` 等）。这是刻意的：这些是**宿主内部模块**，
+  `dsh-invariants`、`dsh-system-prompt`、`dsh-ptc-runtime`、`dsh-sandbox`、`dsh-sandbox-policy`、
+  `dsh-user-approval`、`cordis-plugin-loader`、`cordis-plugin-include` 等）。这是刻意的：这些是**宿主内部模块**，
   自带副本会造成模块身份冲突。目标机器上必须已安装 DSH。
 - 依赖闭包由 `tools/materialize-deps.mjs` 生成，可重复执行：
 

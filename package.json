@@ -1,8 +1,8 @@
 {
   "name": "dsh-plugin-confirmation-resolution",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "DSH 待确认事项决策 (confirmation_resolution): host-plane plugin that adds the confirmation-item runtime rules to the System Prompt and exposes the confirmation_resolution decision tool",
+  "description": "DSH 待确认事项决策 (confirmation_resolution): host-plane plugin that adds the confirmation-item runtime rules to the System Prompt and exposes the confirmation_resolution decision tool, plus the opt-in versioned V2 engine (confirmation_resolution_v2)",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -60,7 +60,7 @@
     "@deepseek-ai/cordis": "^4.0.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2 || ^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.2"
   }
 }

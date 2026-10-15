@@ -16,7 +16,7 @@ import { test } from 'node:test'
 
 import { decide } from '../lib/decide.js'
 
-const { RULES } = await import('../lib/rules.js')
+const { RULES, RULES_V2 } = await import('../lib/rules.js')
 
 /** One C1 that loses no quality: the MODIFY baseline. */
 const C1 = {
@@ -197,4 +197,49 @@ test('规则文本必须描述完整的三态状态机与两个编号复用规�
   // The prose wraps, so match across newlines rather than assuming one line.
   assert.match(RULES, /用\s*\*\*新的确认内容\*\*\s*register 时，该编号开启新一轮/)
   assert.match(RULES, /上一轮的裁决\s*\n?\s*不会授权新一轮的 complete/)
+})
+
+// 2026-10-07 优化：这条规则来自一次真实事故复盘——同一个会话两次以
+// "DeepSeek Messages stream: tool input is invalid JSON"（MALFORMED_RESPONSE）
+// 终止，坏点全部落在 confirmation_resolution 的工具参数 JSON 上。宿主对这类
+// 拒绝没有重试路径，所以插件只能从"少产出、产出得更简单"这一侧降低概率。
+// 断言写成机械检查，避免以后改文案时把纪律悄悄删掉。
+test('规则文本必须约束决策调用的 JSON 写法与单次范围（2026-10-07 优化）', () => {
+  assert.match(RULES, /一次只调用一个确认项/)
+  assert.match(RULES, /不要并发 decide/)
+  assert.match(RULES, /JSON 写法必须保持最简结构/)
+  assert.match(RULES, /键与值之间只用一个冒号/)
+  assert.match(RULES, /用 \\" 转义/)
+  assert.match(RULES, /工具输入 JSON 不合法/)
+})
+
+// ── V2 规则段落（方案 §7 rules.js 一行） ────────────────────────────────────
+// V2 is a separate prompt section that only exists when the V2 tool is enabled.
+// These assertions keep its trigger scope, state machine and result handling from
+// being diluted by later edits.
+
+test('V2 规则文本不得包含反引号（它同样是模板字符串）', () => {
+  assert.equal(RULES_V2.includes('\u0060'), false, 'RULES_V2 must not contain a backtick')
+  assert.equal(RULES_V2.includes('${'), false, 'RULES_V2 must not contain a template placeholder')
+})
+
+test('V2 规则文本不得扩大触发范围', () => {
+  assert.match(RULES_V2, /触发条件与 V1 \*\*完全相同\*\*/)
+  assert.match(RULES_V2, /V2 不扩大触发范围：普通任务、普通修改、无关 follow-up、已解决事项一律不调用。/)
+})
+
+test('V2 规则文本必须描述五个 outcome 与各自的处理方式', () => {
+  for (const outcome of ['MODIFY', 'KEEP_CURRENT', 'REQUEST_APPROVAL', 'INSUFFICIENT_CONTEXT', 'REJECT']) {
+    assert.match(RULES_V2, new RegExp(`\\| ${outcome} \\|`), `missing the ${outcome} row`)
+  }
+  assert.match(RULES_V2, /REJECT 不是 KEEP_CURRENT/)
+  assert.match(RULES_V2, /不是执行授权/)
+  assert.match(RULES_V2, /NO_VERIFIABLE_APPROVAL_SOURCE/)
+  assert.match(RULES_V2, /STALE_DECISION_REVISION/)
+  assert.match(RULES_V2, /ITEM_VERSION_MISMATCH/)
+})
+
+test('V2 规则文本必须要求 UNKNOWN 不被当成通过', () => {
+  assert.match(RULES_V2, /UNKNOWN 不等于 PASS/)
+  assert.match(RULES_V2, /必须给出 goal_fit 与 impact_risk/)
 })

@@ -3,11 +3,16 @@
 [![offline verification](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml/badge.svg)](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A522.19.0-brightgreen.svg)](https://nodejs.org)
-[![offline tests](https://img.shields.io/badge/offline%20tests-58%20passing-brightgreen.svg)](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml)
+[![offline tests](https://img.shields.io/badge/offline%20tests-130%20passing-brightgreen.svg)](https://github.com/bbaz123/dsh-confirmation-resolution/actions/workflows/offline-verification.yml)
 
 **让 DSH 在任务完成后的"待确认事项"阶段，既不机械照做，也不反复询问。**
 
-（安装前警告：插件构建按照npm 全局安装版 0.1.5-rc.1 + web profile版本构建，涉及dsh源码修改，更新dsh可能导致插件不兼容，请注意！！！）`dsh-confirmation-resolution` 是一个用于 DeepSeek Harness（DSH）的待确认事项决策插件。
+> ⚠️ **安装前警告**（与上游 `master` 保持一致）
+> 插件构建按照 npm 全局安装版 **0.1.5-rc.1** + web profile 版本构建，涉及 DSH 源码修改；
+> **更新 DSH 可能导致插件不兼容**，请注意。升级 DSH 后请重跑 `npm run check` 与
+> `dsh --profile web --dump-config`，详见下文「兼容与风险说明」。
+
+`dsh-confirmation-resolution` 是一个用于 DeepSeek Harness（DSH）的待确认事项决策插件。
 
 当 DSH 完成主任务、留下 `C1` / `C2` / `C3` … 等待确认事项之后，用户的回复不会被简单理解为"照原话修改"。
 
@@ -40,6 +45,9 @@
 - **三态状态机**：`register → decide → complete`。`MODIFY` 决策后必须真的执行成功才变 `RESOLVED`，
   执行失败可重试，不会把确认项永久关死。
 - **纯函数决策核心**：`lib/decide.js` 无 I/O、无服务访问、无定时器，可完全离线单测。
+- **调用纪律写进两层**：规则段落与工具描述都要求"一次只判定一个确认项、不并发 decide、
+  候选只写有证据的字段、JSON 只用一个冒号且字符串内引号必须转义"——降低工具参数 JSON
+  被宿主判为不合法（`MALFORMED_RESPONSE`）而整轮失败的概率。
 - **零构建、零配置、零运行时依赖**：纯 ESM，无编译步骤；只依赖宿主 DSH 提供的
   `tools` 与 `systemPrompt` 两个服务；安装后规则自动进入每个会话的 System Prompt。
 
@@ -175,6 +183,108 @@ decide(C1)    → 账本校验 → 固定决策
 目标是：**当修改不会降低质量时满足用户；当修改会降低质量且没有实际使用收益时保持现状；
 当真实使用确实受到影响时，解决问题，同时尽可能减少质量损失和副作用。**
 
+---
+
+## V2：上下文感知的多目标综合评判（可选启用，默认关闭）
+
+上面的 `confirmation_resolution`（V1）以「质量影响」为主轴。V2 是对同一批待确认事项的**综合评判**：
+在满足权限与硬约束的前提下，把 `KEEP_CURRENT`、用户原话方案与替代方案放在一起比较，给出更贴合用户
+目标、风险可控且可解释的裁决。**V1 没有被替换**——V2 是一个独立版本化入口 `confirmation_resolution_v2`，
+只有显式启用时才注册。
+
+### V1 / V2 对照
+
+| | V1 `confirmation_resolution` | V2 `confirmation_resolution_v2` |
+| --- | --- | --- |
+| 决策主轴 | 质量影响 → 保持现状的实际使用影响 → 目标 → 最优方案 | 硬门禁 → 证据可信性 → 场景化多维比较 → 必要审批 |
+| 「不改」的地位 | 质量不受损就不进入比较 | 是显式候选基线，修改方案必须胜过它 |
+| 缺证据 | 乐观默认（缺 `violates_constraints` ≈ 未违反） | `UNKNOWN`，拦住自动执行 |
+| 结果枚举 | `MODIFY` / `KEEP_CURRENT` | 另加 `REQUEST_APPROVAL` / `REJECT`，并区分 `INSUFFICIENT_CONTEXT` |
+| 场景权重 | 固定优先级 | `ui_preference` / `accessibility` / `code_change` / `external_action` / `urgent_fix` / `generic` 各自一套 |
+| 幅度规则 | 200% 为普适硬淘汰 | 仅界面场景的异常信号，且可由 `scale_verified` 覆盖 |
+| 授权令牌 | 状态即授权 | 每次 decide 递增 `decision_revision`，`complete` 必须带对版本 |
+| 审批 | 无 | `AWAITING_APPROVAL` 状态；**不**接受模型自填的 `approved: true` |
+
+### 启用方式
+
+默认**完全关闭**：不加这个开关时，profile 里只有 V1 那个工具和那一条规则段落，行为与升级前逐字相同。
+
+```yaml
+# profiles/<name>/cordis.patch.yml 中该行的 config
+- id: confirmation-resolution
+  config:
+    enableDecisionV2: true
+    # 可选：只对特定会话开放；留空表示启用后所有会话都可用
+    decisionV2Sessions:
+      - <session id>
+```
+
+启用后新增两样东西：一条独立规则段落（`confirmation:policy.v2`）和一个独立工具。
+两者都随该行一起卸载，`ctx.effect` 是可逆的。
+
+### 五个 outcome 与处理方式
+
+| outcome | 含义 | DSH 应当怎么做 |
+| --- | --- | --- |
+| `MODIFY` | 已选定可行方案 | 按 `selected_solution` + `execution_scope` 执行，成功后用同一 `decision_revision` 调 `complete` |
+| `KEEP_CURRENT` | 现状综合更优 | 不修改；该项已 `RESOLVED` |
+| `REQUEST_APPROVAL` | 候选合法，但有必须由用户拍板的重大权衡 | **不是执行授权**：把 `approval_question` 转达用户，用户答复后再发起新的 `decide` |
+| `INSUFFICIENT_CONTEXT` | 关键目标、权限、风险或证据不足 | 按 `missing_information` 补齐后重判；**不得**回落用户原方案 |
+| `REJECT` | 请求触犯不可突破的约束 | 不执行；解释被挡住的硬门禁。**`REJECT` 不是 `KEEP_CURRENT`** |
+
+### 安全边界（V2 特有）
+
+- **`UNKNOWN ≠ PASS`**：门禁证据缺失一律按 `UNKNOWN` 处理并拦住自动执行，绝不乐观默认。
+- **权限与审批分别验证**：`authorization.verification` 决定许可性；审批不能赋予原本没有的权限。
+- **不实现自动审批跃迁**：当前宿主没有可供工具核验的用户确认事件，因此 `approve` 动作一律返回
+  `NOT_APPLICABLE`（`NO_VERIFIABLE_APPROVAL_SOURCE`），只返回审批建议。模型自己填写的
+  `approved: true` 永远不被采信；只有 `source=USER_REPLY` 且 `user_decision=APPROVED`
+  的显式记录才会被当作「调用方申明的用户同意」，并在决策轨迹里标记为 attested 而非 verified。
+- **陈旧授权无法复活**：每次 `decide` 都递增 `decision_revision` 并清空旧审批与旧执行许可；
+  `complete` 必须带上本次的 `decision_revision`，否则拒绝（`STALE_DECISION_REVISION`）。
+- **两套契约互不驱动**：同一个 `C` 编号由 V1 还是 V2 登记，就只能由那一版继续驱动
+  （`ITEM_VERSION_MISMATCH`）。
+
+### 兼容与风险说明
+
+- V2 的 `.docx` 规范与代码同步在 `02`/`03` 中以 V1/V2 版本标注；**两套契约并存期间以代码为准**。
+- V2 增加了调用方需要准备的输入（`context`、`authorization`、带证据的 `candidates`），
+  载荷比 V1 大。这正是「不确定不等于安全」的代价，也是它默认关闭的原因之一：先在小范围会话验证，
+  再决定是否作为默认策略。
+- 本插件按 npm 全局安装版 DSH `0.1.5-rc.1` / `0.2.0-rc.2` 与对应 web profile 构建，
+  涉及宿主内部模块（`dsh-tools` 等）。**更新 DSH 可能导致插件不兼容**，升级后请重跑 `npm run check`
+  与 `dsh --profile web --dump-config`。
+- 回滚：把 `enableDecisionV2` 去掉或设为 `false` 即回到纯 V1；已产生的 V2 会话账本随进程重启清空，
+  不会与 V1 的执行授权混用。
+
+## 工具调用鲁棒性（2026-10-07）
+
+触发这条改进的是一次真实事故复盘：同一个会话里连续两个回合都以
+
+```
+DeepSeek Messages stream: tool input is invalid JSON   （code: MALFORMED_RESPONSE）
+```
+
+终止，坏点全部落在 `confirmation_resolution` 的工具参数 JSON 上——一处是
+`"user_impact_if_unchanged"::`（键值之间多写了一个冒号），一处是字符串值里
+嵌了未转义的英文双引号；同一回合里还出现过同一组 `side_effects` 键被重复输出三次。
+
+已核实的两端事实：
+
+| 端 | 事实 |
+| --- | --- |
+| 宿主 | 适配器发现任一工具块参数不是合法 JSON 就抛 `MALFORMED_RESPONSE` 终止整轮；宿主默认重试策略只覆盖 `EMPTY_RESPONSE / RATE_LIMIT / SERVER / TIMEOUT / TRANSPORT`，**不含它**，所以这类失败没有自动恢复路径。 |
+| 插件 | 工具参数由模型生成，插件无法替模型修复 JSON；能做的只有"要求它少产出、产出得更简单"。 |
+
+因此本插件在**软规则两层同时**加了调用纪律（`lib/rules.js` 的「决策调用纪律」段落 +
+工具描述）：一次只调用一个确认项、不并发 `decide`；候选方案只写有证据的字段、不复述原题；
+JSON 只用一个冒号、字符串内部引号必须转义、不输出重复键组；被宿主判为 JSON 不合法时
+（此时工具一次都没执行、账本状态未变）直接重发或拆成单项。
+
+配套机械断言见 `test/mandatory-scenarios.test.mjs` 与 `test/ledger-guard.test.mjs`，
+改动文案时纪律不会被悄悄删掉。**这不是把失败消灭**——真正的自动重试属于宿主的
+`retryPolicy`（把 `MALFORMED_RESPONSE` 加进 `retryableCodes`），那是另一个仓库的事。
+
 ## Quick start
 
 ```powershell
@@ -239,11 +349,18 @@ complete → DSH 实际执行成功后调用        → STATUS = REGISTERED，�
 
 ```
 lib/
-├── rules.js     01 触发/执行规则文本 → 注册为全局 System Prompt 段落（唯一事实来源）
-├── decide.js    02 固定决策算法：纯函数、无 I/O、不做自然语言推断
-├── ledger.js    会话级确认项账本：纯状态容器，按 exec.agent.id 隔离
-└── index.js     Cordis 装配 + 代码级守卫 + 状态机（register / decide / complete）
+├── rules.js        01 触发/执行规则文本（V1）+ V2 规则文本 → 注册为 System Prompt 段落
+├── decide.js       02 V1 固定决策算法：纯函数、无 I/O、不做自然语言推断
+├── evidence.js     V2 证据模型：PASS/FAIL/UNKNOWN、保守合并、冲突诊断、缺口
+├── policies.js     V2 场景策略：维度、优先级、阈值、幅度规则、帕累托与排序
+├── trace.js        V2 结构化决策轨迹（只返回数据，不写日志）
+├── decision-v2.js  V2 纯决策核心 decideV2()：构造基线 → 硬门禁 → 比较 → 审批 → 结果
+├── ledger.js       会话级确认项账本：纯状态容器，按 exec.agent.id 隔离，含版本化决策令牌
+└── index.js        Cordis 装配 + 代码级守卫 + 状态机（V1 与版本化 V2 两个工具）
 ```
+
+V2 的分层是刻意的：`decision-v2.js` 保持纯函数（无 I/O、无账本、无宿主调用），
+版本分发、会话白名单与状态迁移都留在 `index.js`，因此整套判断仍可离线复现。
 
 职责边界：本插件是**方案评审器，不是方案生成器**。调用前 DSH 必须完成四件事——
 
@@ -261,32 +378,45 @@ lib/
 
 | 规范文件 | 负责 | 落地位置 |
 | --- | --- | --- |
-| `01_DSH_System_Prompt_待确认事项触发规则` | 触发与执行层 | `lib/rules.js` → System Prompt 段落 |
-| `02_Confirmation_Resolution_Plugin_执行规则` | 决策层 | `lib/decide.js` + `lib/index.js` |
-| `03_DSH_待确认事项决策规范` | 规范、校验与测试 | `test/`（**不注入**运行时） |
+| `01_DSH_System_Prompt_待确认事项触发规则` | 触发与执行层（V1） | `lib/rules.js` → `RULES` 段落 |
+| `02_Confirmation_Resolution_Plugin_执行规则` | 决策层（V1） | `lib/decide.js` + `lib/index.js` |
+| `03_DSH_待确认事项决策规范` | 规范、校验与测试（V1） | `test/`（**不注入**运行时） |
+
+三份 `.docx` 的**正文描述的都是 V1 契约**（该契约未变），文末各带一段
+「2026-10-15 版本补充：V1 / V2 双契约」，标注 V2 的边界并指向 `lib/rules.js` 的 `RULES_V2`、
+V2 的四个纯函数模块与对应测试——**不把 V2 算法抄进规范**，避免形成双重事实来源。
+补充段落由 `tools/docx-v2-addendum.ps1` 追加，`tools/docx-addendum-verify.ps1` 逐段比对
+「改前 vs 改后」以证明只新增、未改动原有内容。
 
 ## Testing
 
 ```powershell
-npm run test:offline   # 58 个用例：纯决策算法 + 账本，任何机器都能跑，不需要 DSH
-npm test               # 94 个用例：上面 + 端到端生命周期 + 驱动真实注册工具的状态机与守卫用例（需要 DSH）
-npm run verify         # 23 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证（需要 DSH）
+npm run test:offline   # 130 个用例：V1/V2 纯决策算法 + 证据模型 + 场景策略 + 账本，任何机器都能跑，不需要 DSH
+npm test               # 187 个用例：上面 + 端到端生命周期 + V1/V2 真实注册工具的守卫与状态机用例（需要 DSH）
+npm run verify         # 32 项：真实 Cordis 上下文 + 真实 defineTool 的装配验证，含双版本共存（需要 DSH）
 npm run check          # 语法 + 全部测试 + 装配验证（需要 DSH）
 ```
+
+> 沙箱环境下 `npm run test:offline` 可能因 `spawn EPERM` 失败（子进程管道被沙箱拦截），这不是用例
+> 失败。等价且可用的跑法是 `node --test --experimental-test-isolation=none <files>`。
 
 `test/e2e-lifecycle.test.mjs` 是端到端叙事测试：走完一个会话的完整生命周期
 （发布 → 登记 → 决策 → **执行失败可重试** → 执行成功关闭 → **新轮复用编号** → 非法调用被拒），
 每一步都断言下一步所依赖的状态，因此流程一旦偏离文档化的状态机就会在偏离处失败。
 它驱动真实注册的工具，所以与 `ledger-guard.test.mjs` 一样需要 DSH。
 
-测试能分层的依据是精确的：`lib/decide.js`、`lib/ledger.js`、`lib/rules.js` **不 import 任何外部包**，
+测试能分层的依据是精确的：`lib/decide.js`、`lib/ledger.js`、`lib/rules.js`、`lib/evidence.js`、
+`lib/policies.js`、`lib/trace.js`、`lib/decision-v2.js` **不 import 任何外部包**，
 所以只覆盖它们的用例可以完全离线运行；而任何 import 到 `lib/index.js` 的用例都会拉入宿主的
 `@deepseek-ai/dsh-tools`（它自己又依赖 `dsh-scope`/`dsh-llm`/`dsh-session` 等宿主内部模块），
 因此必须在已安装 DSH 的环境里跑。`npm run verify` 用 `DSH_HOME` 与 `DSH_PROFILE` 定位 profile，
 没有硬编码路径；找不到 DSH 时以退出码 2 明确报错，**不会把"没能执行"当成通过**。
 
 覆盖重点：决策矩阵的三种结果、硬性淘汰门、跨字段矛盾输入、信息不足不回落原方案、
-状态机的 `register → decide → complete`、无隐式登记、会话隔离。
+状态机的 `register → decide → complete`、无隐式登记、会话隔离；以及 V2 的方案 §9 场景矩阵
+（T01–T16：纯偏好不归零、质量为 NONE 不自动改、300% 与精确尺寸的区别、UNKNOWN ≠ PASS、
+权限与审批分别验证、伪造审批被拒、陈旧授权被拒）与属性测试（授权单调性、风险单调性、
+确定性、不可执行结果不携带许可、鲁棒性）。
 
 ## Compatibility
 
@@ -306,10 +436,14 @@ dsh plugin --profile web remove dsh-plugin-confirmation-resolution
 
 ## Roadmap
 
-- **可配置的决策边界**：把"什么算影响实际使用"的判断维度暴露成配置，而不是只有一套固定口径。
+- ~~**可配置的决策边界**~~：已由 V2 的 `lib/policies.js` 落地——场景策略、维度、阈值与幅度规则都是数据。
 - **账本可选持久化**：目前账本按会话隔离且**不持久化**（DSH 重启即空）。是否需要跨重启保留，
   属于契约变更，需先讨论（见 `AGENTS.md`）。
-- **决策轨迹可观测**：把每次 `decide` 的输入维度与淘汰理由输出成结构化日志，便于事后复盘。
+- ~~**决策轨迹可观测**~~：已由 V2 的 `lib/trace.js` 落地——每次 `decide` 都返回结构化轨迹
+  （硬门禁结果、帕累托前沿、排序、敏感性、缺口、冲突、审批），仍只返回数据、不写日志。
+- **把 V2 变成默认策略（讨论中）**：需要先在真实会话里灰度验证，并确认载荷成本可接受。
+- **更小载荷的判定形态（讨论中）**：目前候选可带十余个字段，模型容易被诱导长篇填充；
+  若要把载荷进一步压小，需要连着 V2 的排序依据一起改，属于决策层契约变更，需先讨论。
 - **跟随宿主演进**：持续跟踪 DSH 宿主内部模块的版本变化，验证装配兼容性。
 
 > Roadmap 是方向而不是承诺。想推进其中某项，欢迎先开 issue 讨论范围与契约影响。
@@ -322,7 +456,7 @@ dsh plugin --profile web remove dsh-plugin-confirmation-resolution
 最快的自检（**不需要安装 DSH**）：
 
 ```powershell
-npm run test:offline   # 应 58/58
+npm run test:offline   # 应 130/130
 ```
 
 CI 在 Node 22 与 24 上跑这层离线套件，并额外断言"没有 DSH 时 `verify` 必须以退出码 2 报错"——
@@ -364,8 +498,8 @@ node tools/materialize-deps.mjs <bundleDir> "$env:USERPROFILE\.dsh\profiles\node
 ```
 
 因此：**在未安装到 profile 的独立副本目录里跑 `npm test` 会因宿主 peer 无法解析而失败**，
-这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 58/58 通过）；
-装进 profile 后再跑 `npm test`（应 94/94）与 `npm run verify`（应 23/23）。
+这是依赖模型的预期结果，不是缺陷。副本里请用 `npm run test:offline`（应 130/130 通过）；
+装进 profile 后再跑 `npm test`（应 187/187）与 `npm run verify`（应 32/32）。
 
 ### 在目标机器上安装
 
@@ -398,6 +532,16 @@ cd $pack; npm run test:offline
 
 复验判据（缺一不可）：副本内 `lib/ledger.js` 存在、`lib/index.js` 含 `ledger.guard` 与
 `action === 'complete'`、`lib/decide.js` 含 `USER_GOAL_REQUIRED_FOR_MODIFY`、
-`npm run test:offline` 全绿。
+V2 的四个纯函数模块 `lib/evidence.js`、`lib/policies.js`、`lib/trace.js`、`lib/decision-v2.js`
+存在、`lib/index.js` 含 `confirmation_resolution_v2`、`lib/ledger.js` 含
+`STALE_DECISION_REVISION` 与 `AWAITING_APPROVAL`，以及 `npm run test:offline` 全绿。
+复验命令（在副本目录里跑，不需要 DSH）：
+
+```powershell
+node --test --experimental-test-isolation=none `
+  test/decide.test.mjs test/ledger.test.mjs test/mandatory-scenarios.test.mjs `
+  test/v1-baseline.test.mjs test/evidence.test.mjs test/policies.test.mjs `
+  test/decision-v2.test.mjs test/ledger-v2.test.mjs   # 应 130/130
+```
 
 </details>

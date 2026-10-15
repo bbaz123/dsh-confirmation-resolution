@@ -530,6 +530,9 @@ test('⑧ 工具描述与 rules.js 的状态说法一致（不得出现"仍为 P
   assert.ok(!description.includes('仍为 PENDING'), 'tool description must not claim PENDING after a MODIFY')
   assert.ok(description.includes('AWAITING_EXECUTION'), 'tool description must name AWAITING_EXECUTION')
   assert.ok(!/保持 PENDING/.test(description), 'tool description must not claim PENDING after failed execution')
+  // 2026-10-07 优化：描述是软规则的一半，JSON 写法纪律必须与 rules.js 同时在场。
+  assert.ok(description.includes('不要并发'), 'tool description must forbid parallel decide calls')
+  assert.ok(description.includes('键与值之间只用一个冒号'), 'tool description must state the JSON syntax discipline')
 })
 
 test('插件入口经真实解析路径可加载，且导出未变', () => {

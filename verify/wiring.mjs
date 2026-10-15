@@ -296,5 +296,149 @@ await check('both contributions are reversible effects', () => {
   for (const disposer of disposers) assert.equal(typeof disposer, 'function')
 })
 
+// ── 7. the versioned V2 row (方案 §5, §6) ───────────────────────────────────
+// V2 is a SECOND tool behind an explicit switch. It is verified separately so the
+// default profile keeps proving that V1 alone is what ships.
+const v2Sections = []
+const v2Tools = []
+const v2Disposers = []
+const v2ctx = new Context()
+v2ctx.provide('systemPrompt', {
+  getSectionOrder: () => 116,
+  section: (section) => {
+    v2Sections.push(section)
+    return () => { v2Sections.length = 0 }
+  },
+})
+v2ctx.provide('tools', {
+  register: (definition) => {
+    v2Tools.push(definition)
+    return () => { v2Tools.length = 0 }
+  },
+})
+v2ctx.effect = (callback) => {
+  const disposer = callback()
+  v2Disposers.push(disposer)
+  return disposer
+}
+
+await check('enabling V2 adds a versioned tool and its own section, without touching V1', () => {
+  plugin.apply(v2ctx, plugin.Config({ enableDecisionV2: true }))
+  assert.deepEqual(v2Tools.map((tool) => tool.name), ['confirmation_resolution', 'confirmation_resolution_v2'])
+  assert.equal(v2Sections.length, 2)
+  assert.equal(v2Sections[0].name, 'confirmation:policy')
+  assert.equal(v2Sections[1].name, 'confirmation:policy.v2')
+  assert.equal(v2Disposers.length, 3)
+  assert.deepEqual(v2Tools[0].parameters.properties.action.enum, ['register', 'decide', 'complete'])
+  assert.deepEqual(v2Tools[1].parameters.properties.operation.enum, ['register', 'decide', 'complete', 'approve'])
+})
+
+const v2Tool = v2Tools[1]
+const v2exec = { agent: { id: 'wiring-v2-session' } }
+const v2call = {
+  schema_version: '2.0',
+  confirmation_id: 'C1',
+  current_state: '首页主按钮为次级尺寸',
+  original_confirmation: '主按钮是否需要更突出？',
+  user_reply: 'C1 修改',
+  context: { scenario: 'ui_preference', user_goal: '提高关键操作的可发现性', goal_source: 'USER_STATED' },
+  authorization: { verification: 'PASS' },
+  candidates: [
+    { id: 'KEEP', kind: 'KEEP_CURRENT' },
+    {
+      id: 'PROMOTE',
+      kind: 'MODIFY',
+      approach: '提高一个视觉层级并加强局部对比度',
+      scope: 'component',
+      reversibility: 'reversible',
+      evidence_state: 'PASS',
+      goal_fit: 'HIGH',
+      user_value: 'HIGH',
+      output_quality: 'HIGH',
+      impact_risk: 'LOW',
+      execution_cost: 'LOW',
+      long_term_value: 'MEDIUM',
+    },
+  ],
+}
+
+await check('V2 register reports REGISTERED and PENDING', async () => {
+  const registered = await v2Tool.execute({ ...v2call, operation: 'register' }, v2exec)
+  assert.equal(registered.outcome, 'REGISTERED')
+  assert.equal(registered.lifecycle_status, 'PENDING')
+  assert.equal(registered.decision_revision, 0)
+})
+
+await check('V2 decide returns MODIFY with a decision_revision and an execution scope', async () => {
+  const decided = await v2Tool.execute({ ...v2call, operation: 'decide' }, v2exec)
+  assert.equal(decided.outcome, 'MODIFY')
+  assert.equal(decided.lifecycle_status, 'AWAITING_EXECUTION')
+  assert.equal(decided.decision_revision, 1)
+  assert.equal(decided.selected_solution_id, 'PROMOTE')
+  assert.equal(decided.execution_scope, 'component')
+  assert.equal(decided.executable, true)
+  assert.ok(decided.do_not_change.length >= 1)
+})
+
+await check('V2 complete without the revision, or with a stale one, is refused', async () => {
+  const noRevision = await v2Tool.execute({ ...v2call, operation: 'complete' }, v2exec)
+  assert.equal(noRevision.outcome, 'NOT_APPLICABLE')
+  assert.ok(noRevision.reason_codes.includes('MISSING_DECISION_REVISION'))
+
+  const redecided = await v2Tool.execute({ ...v2call, operation: 'decide' }, v2exec)
+  assert.equal(redecided.decision_revision, 2)
+  const stale = await v2Tool.execute({ ...v2call, operation: 'complete', decision_revision: 1 }, v2exec)
+  assert.equal(stale.outcome, 'NOT_APPLICABLE')
+  assert.ok(stale.reason_codes.includes('STALE_DECISION_REVISION'))
+})
+
+await check('V2 complete with the current revision resolves the item', async () => {
+  const completed = await v2Tool.execute({ ...v2call, operation: 'complete', decision_revision: 2 }, v2exec)
+  assert.equal(completed.outcome, 'REGISTERED')
+  assert.equal(completed.lifecycle_status, 'RESOLVED')
+})
+
+await check('V2 approve is refused while the host exposes no verifiable approval source', async () => {
+  const refused = await v2Tool.execute({ ...v2call, operation: 'approve' }, v2exec)
+  assert.equal(refused.outcome, 'NOT_APPLICABLE')
+  assert.ok(refused.reason_codes.includes('NO_VERIFIABLE_APPROVAL_SOURCE'))
+})
+
+await check('a V2 decision never touches a V1 item (contract isolation)', async () => {
+  const v1Tool = v2Tools[0]
+  const mixed = { agent: { id: 'wiring-v2-mixed' } }
+  await v1Tool.execute({
+    confirmation_id: 'C1',
+    current_state: '现状',
+    original_confirmation: '问题？',
+    user_goal: '目标',
+    quality_impact: 'NONE',
+    candidate_solutions: [{ label: 'a', approach: '做法', scope: 'component' }],
+    action: 'register',
+  }, mixed)
+  const refused = await v2Tool.execute({ ...v2call, operation: 'decide' }, mixed)
+  assert.equal(refused.outcome, 'NOT_APPLICABLE')
+  assert.ok(refused.reason_codes.includes('ITEM_VERSION_MISMATCH'))
+})
+
+await check('V2 also refuses a number this session never published', async () => {
+  const refused = await v2Tool.execute({ ...v2call, confirmation_id: 'C9', operation: 'decide' }, { agent: { id: 'wiring-v2-other' } })
+  assert.equal(refused.outcome, 'NOT_APPLICABLE')
+  assert.ok(refused.reason_codes.includes('UNKNOWN_CONFIRMATION_ITEM'))
+})
+
+await check('V2 render() emits the canonical uppercase block', async () => {
+  const decided = await v2Tool.execute({
+    ...v2call,
+    confirmation_id: 'C2',
+    operation: 'register',
+  }, { agent: { id: 'wiring-v2-render' } })
+  assert.equal(decided.outcome, 'REGISTERED')
+  const blocks = v2Tool.output.render({}, decided)
+  assert.equal(blocks.length, 1)
+  assert.ok(blocks[0].text.includes('OUTCOME: REGISTERED'))
+  assert.ok(blocks[0].text.includes('EXECUTABLE: NO'))
+})
+
 console.log(results.join('\n'))
 console.log(`\n${results.filter((line) => line.startsWith('PASS')).length}/${results.length} wiring checks passed`)

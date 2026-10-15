@@ -26,7 +26,8 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       # No `npm install` step is intentional: the offline suite covers the pure
-      # modules (decide.js / ledger.js / rules.js), which import nothing at all.
+      # modules (decide.js / ledger.js / rules.js plus the V2 evidence, policy,
+      # trace and decision cores), which import nothing at all.
       # A bare checkout is therefore enough, and CI stays independent of the
       # registry and of the DSH host internals.
       - name: Syntax check
@@ -35,8 +36,12 @@ jobs:
           node --check lib/decide.js
           node --check lib/ledger.js
           node --check lib/rules.js
+          node --check lib/evidence.js
+          node --check lib/policies.js
+          node --check lib/trace.js
+          node --check lib/decision-v2.js
 
-      - name: Offline suite (58 tests)
+      - name: Offline suite (130 tests)
         run: npm run test:offline
 
       # The wiring check needs a real DSH install. Without one it must exit 2 and

@@ -46,10 +46,10 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
-    "test:offline": "node --test \"test/decide.test.mjs\" \"test/ledger.test.mjs\" \"test/mandatory-scenarios.test.mjs\"",
-    "test:plugin": "node --test \"test/decide.test.mjs\" \"test/ledger.test.mjs\" \"test/mandatory-scenarios.test.mjs\" \"test/e2e-lifecycle.test.mjs\" \"test/ledger-guard.test.mjs\"",
+    "test:offline": "node --test \"test/decide.test.mjs\" \"test/ledger.test.mjs\" \"test/mandatory-scenarios.test.mjs\" \"test/v1-baseline.test.mjs\" \"test/evidence.test.mjs\" \"test/policies.test.mjs\" \"test/decision-v2.test.mjs\" \"test/ledger-v2.test.mjs\"",
+    "test:plugin": "node --test \"test/decide.test.mjs\" \"test/ledger.test.mjs\" \"test/mandatory-scenarios.test.mjs\" \"test/v1-baseline.test.mjs\" \"test/evidence.test.mjs\" \"test/policies.test.mjs\" \"test/decision-v2.test.mjs\" \"test/ledger-v2.test.mjs\" \"test/e2e-lifecycle.test.mjs\" \"test/ledger-guard.test.mjs\" \"test/v2-tool.test.mjs\"",
     "verify": "node verify/wiring.mjs",
-    "check": "node --check lib/index.js && node --check lib/decide.js && node --check lib/ledger.js && node --check lib/rules.js && node --test \"test/*.test.mjs\" && node verify/wiring.mjs"
+    "check": "node --check lib/index.js && node --check lib/decide.js && node --check lib/ledger.js && node --check lib/rules.js && node --check lib/evidence.js && node --check lib/policies.js && node --check lib/trace.js && node --check lib/decision-v2.js && node --test \"test/*.test.mjs\" && node verify/wiring.mjs"
   },
   "dsh": {
     "bundle": {
@@ -60,7 +60,7 @@
     "@deepseek-ai/cordis": "^4.0.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2 || ^0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.2"
   }
 }
